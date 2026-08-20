@@ -1,0 +1,108 @@
+THIRD-PARTY NOTICES
+===================
+
+vplot's own source is MIT licensed (see LICENSE). It also contains and links
+code from the projects below. All of them are permissive -- there is no copyleft
+anywhere in this dependency chain -- but each requires its copyright notice to
+be retained, which is what this file does.
+
+Files carrying an upstream copyright header keep that header. Do not strip them.
+
+
+1. matplotlib
+-------------
+Copyright (c) 2012- Matplotlib Development Team; All Rights Reserved.
+License: matplotlib license (a PSF-style permissive license).
+Upstream: https://github.com/matplotlib/matplotlib
+
+vplot's rendering core is derived from matplotlib's C++ extension sources. The
+derived files live under source/vplot/render/mpl/ and each carries a header
+naming its matplotlib origin:
+
+    _backend_agg.h, _backend_agg.cpp   Agg renderer driver
+    _backend_agg_basic_types.h         GCAgg, ClipPath, Dashes, SketchParams
+    path_converters.h                  path pipeline: NaN removal, clipping,
+                                       snapping, simplification, sketch
+    agg_workaround.h                   Agg pixel-format workarounds
+    array.h                            scalar/empty array-likes
+    mplutils.h                         shared helpers
+    vpl_adaptors.h                     rewritten from src/py_adaptors.h
+
+Modifications: the CPython and pybind11 coupling has been removed. Concretely,
+src/py_adaptors.h (which adapted NumPy arrays to Agg's vertex-source interface)
+was rewritten as vpl_adaptors.h over plain C arrays; the pybind11 type_casters
+for e_snap_mode, ClipPath, Dashes, SketchParams and GCAgg were deleted; and
+py::value_error was replaced with std::invalid_argument. The algorithms are
+otherwise unmodified, which is deliberate -- output fidelity against
+matplotlib is the point.
+
+Colormap, named-colour and mathtext data tables transcribed from matplotlib's
+Python sources are likewise derivative works of matplotlib.
+
+
+2. Anti-Grain Geometry (AGG) 2.4
+--------------------------------
+Copyright (C) 2002-2005 Maxim Shemanarev (http://www.antigrain.com)
+License: "Permission to copy, use, modify, sell and distribute this software is
+granted provided this copyright notice appears in all copies. This software is
+provided 'as is' without express or implied warranty, and with no claim as to
+its suitability for any purpose."
+See external/agg24-svn/copying.
+
+Vendored at external/agg24-svn/, taken from matplotlib's extern/agg24-svn --
+a patched 2.4 snapshot. This is intentionally not upstream AGG 2.6: matplotlib
+patches it and renders against this exact snapshot, and a different AGG changes
+antialiasing coverage at the pixel level.
+
+Note that AGG 2.5 was released as GPL. This is not that version; 2.4 and the
+community forks derived from it are permissive.
+
+Only the eight translation units matplotlib compiles are vendored. The
+platform/, ctrl/ and X11/win32 support code is omitted.
+
+
+3. FreeType
+-----------
+Portions of this software are copyright (c) The FreeType Project
+(https://www.freetype.org). All rights reserved.
+License: FreeType License (FTL), a BSD-style license.
+
+FreeType is dual licensed FTL / GPLv2. vplot takes the FTL option. The FTL
+requires this credit to appear in the documentation, which this notice
+satisfies.
+
+Resolved as an xmake package, not vendored.
+
+
+4. DejaVu fonts
+---------------
+Fonts are (c) Bitstream (see the Bitstream Vera Fonts Copyright) with
+DejaVu changes in the public domain.
+License: Bitstream Vera Fonts Copyright -- permissive, with the restriction
+that the fonts may not be sold on their own and that modified versions may not
+use the "Bitstream Vera" or "DejaVu" reserved names.
+
+Redistributed with matplotlib and embedded in vplot for default text rendering.
+
+
+5. zlib
+-------
+Copyright (C) 1995-2024 Jean-loup Gailly and Mark Adler
+License: zlib License -- permissive, requires only that the origin not be
+misrepresented and that altered versions be marked as such.
+
+Used solely for the deflate stream inside PNG output. Resolved as an xmake
+package, not vendored.
+
+
+Not yet used
+------------
+Recorded here so the obligations are known before these get wired in:
+
+  HarfBuzz  -- "Old MIT" license. Complex-script shaping (Stage 4+).
+  libraqm   -- MIT. Shaping/bidi driver over HarfBuzz + SheenBidi (Stage 4+).
+  SheenBidi -- Apache-2.0. Pulled in only via libraqm. This is the one
+               Apache-2.0 component; it coexists fine with MIT, but its patent
+               grant makes it the only piece that would complicate GPLv2
+               compatibility, so it stays out until complex scripts are needed.
+  Qhull     -- permissive. Delaunay triangulation for tricontour (Stage 3+).

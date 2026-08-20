@@ -1,0 +1,179 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>VRI</title>
+  <style>
+    :root {
+      --bg-0: #0b0b0f;
+      --bg-1: #14141c;
+      --panel: rgba(20, 20, 28, .92);
+      --line: #262633;
+      --text: #ececf4;
+      --muted: #8b8b9e;
+      --accent: #7aa2ff;
+      --accent-2: #b18cff;
+      --err: #ff6b7a;
+      --warn: #ffc15e;
+    }
+    * { box-sizing: border-box; }
+    html, body {
+      margin: 0; height: 100%; overflow: hidden;
+      color: var(--text);
+      font-family: ui-monospace, "JetBrains Mono", "Cascadia Mono", "SFMono-Regular", Menlo, monospace;
+      background:
+        radial-gradient(1100px 700px at 12% -15%, #1b1b3a 0%, transparent 60%),
+        radial-gradient(900px 600px at 100% 115%, #2a1442 0%, transparent 58%),
+        linear-gradient(180deg, var(--bg-1), var(--bg-0));
+    }
+    .layout { display: grid; grid-template-rows: auto 1fr auto; gap: 12px; height: 100%; padding: 12px; }
+    .topbar {
+      display: flex; align-items: center; gap: 12px; padding: 0 14px; min-height: 44px;
+      border: 1px solid var(--line); border-radius: 10px; background: var(--panel);
+    }
+    .brand { display: flex; align-items: center; gap: 10px; font-weight: 700; letter-spacing: .3px; }
+    .dot { width: 9px; height: 9px; border-radius: 999px; background: linear-gradient(180deg, var(--accent-2), var(--accent)); box-shadow: 0 0 12px rgba(122, 162, 255, .7); }
+    .sub { color: var(--muted); font-weight: 400; font-size: 12px; }
+    a.sub { text-decoration: none; }
+    a.sub:hover { color: var(--text); }
+    .switch { margin-left: auto; display: inline-flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+    .seg { border: 0; background: transparent; color: var(--muted); font: inherit; font-size: 12px; padding: 6px 14px; cursor: pointer; transition: background .15s ease, color .15s ease; }
+    .seg + .seg { border-left: 1px solid var(--line); }
+    .seg:hover { color: var(--text); }
+    .seg.active { background: linear-gradient(180deg, var(--accent-2), var(--accent)); color: #0b0b0f; font-weight: 700; }
+    .stage {
+      position: relative; display: flex; align-items: center; justify-content: center;
+      border: 1px solid var(--line); border-radius: 14px; overflow: hidden; min-height: 0;
+      background:
+        linear-gradient(90deg, rgba(122, 162, 255, .03) 1px, transparent 1px) 0 0 / 26px 26px,
+        linear-gradient(180deg, rgba(122, 162, 255, .03) 1px, transparent 1px) 0 0 / 26px 26px,
+        #06060a;
+      box-shadow: inset 0 0 0 1px rgba(122, 162, 255, .06), 0 24px 70px rgba(0, 0, 0, .55);
+    }
+    #canvas { display: block; outline: none; background: #000; max-width: 100%; max-height: 100%; }
+    .overlay {
+      position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px;
+      background: rgba(6, 6, 10, .96); color: var(--muted); font-size: 13px; transition: opacity .35s ease;
+    }
+    .overlay.hidden { opacity: 0; pointer-events: none; }
+    .spinner { width: 30px; height: 30px; border: 3px solid var(--line); border-top-color: var(--accent); border-radius: 999px; animation: spin .8s linear infinite; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .console { display: flex; flex-direction: column; border: 1px solid var(--line); border-radius: 10px; background: var(--panel); overflow: hidden; height: 180px; transition: height .15s ease; }
+    .console.collapsed { height: 38px; }
+    .console-head { display: flex; align-items: center; gap: 10px; padding: 8px 12px; font-size: 12px; color: var(--muted); cursor: pointer; user-select: none; }
+    .console-head .label { color: var(--accent); }
+    .console-head .preview { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); }
+    .console-head .chev { transition: transform .15s ease; }
+    .console.collapsed .console-head .chev { transform: rotate(180deg); }
+    #log { margin: 0; padding: 6px 12px 10px; overflow: auto; font-size: 12px; line-height: 1.55; white-space: pre-wrap; word-break: break-word; border-top: 1px solid var(--line); }
+    .console.collapsed #log { display: none; }
+    #log .l { color: #c8c8d6; }
+    #log .e { color: var(--err); }
+    #log .w { color: var(--warn); }
+    .hint { color: var(--muted); opacity: .6; }
+    .hint code { color: var(--accent); }
+  </style>
+</head>
+<body>
+  <div class="layout">
+    <header class="topbar">
+      <span class="brand"><span class="dot"></span><span id="brand">VRI</span><span class="sub" id="sub"></span></span>
+      <!-- Resolves to the gallery index when deployed next to it on the website;
+           harmless (a directory listing) under local emrun. -->
+      <a class="sub" href="./">&larr; gallery</a>
+      <span class="switch" role="group" aria-label="Backend">
+        <button class="seg" id="seg-webgpu" type="button">WebGPU</button>
+        <button class="seg" id="seg-webgl" type="button">WebGL</button>
+      </span>
+    </header>
+    <section class="stage">
+      <canvas id="canvas" tabindex="-1" oncontextmenu="event.preventDefault()" width="640" height="480"></canvas>
+      <div class="overlay" id="overlay"><div class="spinner"></div><div id="status">Loading…</div></div>
+    </section>
+    <section class="console collapsed" id="console">
+      <div class="console-head" id="console-head">
+        <span class="label">console</span>
+        <span class="preview" id="preview">standby…</span>
+        <span class="chev">▴</span>
+      </div>
+      <pre id="log"></pre>
+    </section>
+  </div>
+  <script>
+    (function () {
+      var canvas = document.getElementById("canvas");
+      var overlay = document.getElementById("overlay");
+      var statusEl = document.getElementById("status");
+      var logEl = document.getElementById("log");
+      var preview = document.getElementById("preview");
+      var consoleEl = document.getElementById("console");
+      var firstLog = true;
+      var MAX = 1000, lines = 0;
+
+      document.getElementById("console-head").addEventListener("click", function () {
+        consoleEl.classList.toggle("collapsed");
+      });
+
+      /* Backend switch: reload with ?backend=… and highlight the running one. */
+      var segGpu = document.getElementById("seg-webgpu");
+      var segGl = document.getElementById("seg-webgl");
+      function setActiveBackend(which) {
+        segGpu.classList.toggle("active", which === "webgpu");
+        segGl.classList.toggle("active", which === "webgl");
+      }
+      function gotoBackend(which) {
+        var u = new URL(window.location.href);
+        u.searchParams.set("backend", which);
+        window.location.href = u.toString();
+      }
+      segGpu.addEventListener("click", function () { gotoBackend("webgpu"); });
+      segGl.addEventListener("click", function () { gotoBackend("webgl"); });
+      /* Pre-highlight from the URL; the running backend (via vriSetTitle) confirms it. */
+      (function () {
+        var b = new URLSearchParams(window.location.search).get("backend");
+        if (b === "webgpu") setActiveBackend("webgpu");
+        else if (b === "webgl" || b === "opengl") setActiveBackend("webgl");
+      })();
+
+      function append(text, cls) {
+        if (text == null) return;
+        var msg = String(text);
+        if (firstLog) { overlay.classList.add("hidden"); consoleEl.classList.remove("collapsed"); firstLog = false; }
+        preview.textContent = msg;
+        var div = document.createElement("div");
+        div.className = cls || "l";
+        div.textContent = msg;
+        logEl.appendChild(div);
+        if (++lines > MAX && logEl.firstChild) { logEl.removeChild(logEl.firstChild); lines--; }
+        logEl.scrollTop = logEl.scrollHeight;
+      }
+
+      /* Build Module before the emscripten loader. NOTE: emscripten minifies this shell
+         onto a single line, so only block comments are safe here (line comments would eat
+         the rest of the code). We set print/printErr; --emrun wraps them afterwards, so
+         both the in-page console and the emrun stdout capture see every line. */
+      var Module = window.Module || {};
+      Module.canvas = canvas;
+      Module.print = function (t) { append(t, "l"); };
+      Module.printErr = function (t) { append(t, "e"); };
+      Module.setStatus = function (t) { if (statusEl) statusEl.textContent = t || "Running"; };
+      Module.monitorRunDependencies = function (left) {
+        Module.totalDependencies = Math.max(Module.totalDependencies || 0, left);
+        if (statusEl && left > 0) statusEl.textContent = "Loading " + (Module.totalDependencies - left) + "/" + Module.totalDependencies + "…";
+      };
+      Module.onAbort = function (what) { append("ABORT: " + what, "e"); overlay.classList.remove("hidden"); statusEl.textContent = "aborted"; };
+      Module.vriSetTitle = function (name, api) {
+        document.title = "VRI " + name + " (" + api + ")";
+        var s = document.getElementById("sub"); if (s) s.textContent = "· " + name + " · " + api;
+        setActiveBackend(api === "WebGPU" ? "webgpu" : "webgl"); /* reflect what VRI actually picked */
+      };
+      Module.vriReady = function () { overlay.classList.add("hidden"); };
+      /* Safety net: never leave the overlay spinning forever. */
+      setTimeout(function () { overlay.classList.add("hidden"); }, 8000);
+      window.Module = Module;
+    })();
+  </script>
+  {{{ SCRIPT }}}
+</body>
+</html>

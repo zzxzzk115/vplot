@@ -1,0 +1,42 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  build-and-test:
+    name: Build and test (Windows / MSVC)
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up xmake
+        uses: xmake-io/github-action-setup-xmake@v1
+        with:
+          xmake-version: latest
+
+      - name: Cache xmake packages
+        uses: actions/cache@v4
+        with:
+          path: ~/AppData/Local/.xmake/packages
+          key: xmake-${{ runner.os }}-${{ hashFiles('xmake.lua', 'source/xmake.lua') }}
+          restore-keys: |
+            xmake-${{ runner.os }}-
+
+      # The ImGui demo pulls packages from a private xmake repository, so CI
+      # builds only the library, the tests and the tools.
+      - name: Configure
+        run: xmake f -y -m release --vplot_build_examples=n
+
+      - name: Build
+        run: xmake build
+
+      # The differential tests compare against committed matplotlib reference
+      # images, so they need no Python at runtime.
+      - name: Test
+        run: xmake test

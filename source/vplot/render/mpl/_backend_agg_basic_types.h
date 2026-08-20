@@ -1,0 +1,129 @@
+#ifndef MPL_BACKEND_AGG_BASIC_TYPES_H
+#define MPL_BACKEND_AGG_BASIC_TYPES_H
+
+/* Contains some simple types from the Agg backend that are also used
+   by other modules */
+
+#include <unordered_map>
+#include <vector>
+
+#include "agg_color_rgba.h"
+#include "agg_math_stroke.h"
+#include "agg_trans_affine.h"
+#include "path_converters.h"
+
+#include "vpl_adaptors.h"
+
+struct ClipPath
+{
+    mpl::PathIterator path;
+    agg::trans_affine trans;
+};
+
+struct SketchParams
+{
+    double scale;
+    double length;
+    double randomness;
+};
+
+class Dashes
+{
+    typedef std::vector<std::pair<double, double> > dash_t;
+    double dash_offset;
+    dash_t dashes;
+
+  public:
+    double get_dash_offset() const
+    {
+        return dash_offset;
+    }
+    void set_dash_offset(double x)
+    {
+        dash_offset = x;
+    }
+    void add_dash_pair(double length, double skip)
+    {
+        dashes.emplace_back(length, skip);
+    }
+    size_t size() const
+    {
+        return dashes.size();
+    }
+
+    template <class T>
+    void dash_to_stroke(T &stroke, double dpi, bool isaa)
+    {
+        double scaleddpi = dpi / 72.0;
+        for (auto [val0, val1] : dashes) {
+            val0 = val0 * scaleddpi;
+            val1 = val1 * scaleddpi;
+            if (!isaa) {
+                val0 = (int)val0 + 0.5;
+                val1 = (int)val1 + 0.5;
+            }
+            stroke.add_dash(val0, val1);
+        }
+        stroke.dash_start(get_dash_offset() * scaleddpi);
+    }
+};
+
+typedef std::vector<Dashes> DashesVector;
+
+class GCAgg
+{
+  public:
+    GCAgg()
+        : linewidth(1.0),
+          alpha(1.0),
+          cap(agg::butt_cap),
+          join(agg::round_join),
+          snap_mode(SNAP_FALSE)
+    {
+    }
+
+    ~GCAgg()
+    {
+    }
+
+    double linewidth;
+    double alpha;
+    bool forced_alpha;
+    agg::rgba color;
+    bool isaa;
+
+    agg::line_cap_e cap;
+    agg::line_join_e join;
+
+    agg::rect_d cliprect;
+
+    ClipPath clippath;
+
+    Dashes dashes;
+
+    e_snap_mode snap_mode;
+
+    mpl::PathIterator hatchpath;
+    agg::rgba hatch_color;
+    double hatch_linewidth;
+
+    SketchParams sketch;
+
+    bool has_hatchpath()
+    {
+        return hatchpath.total_vertices() != 0;
+    }
+
+  private:
+    // prevent copying
+    GCAgg(const GCAgg &);
+    GCAgg &operator=(const GCAgg &);
+};
+
+
+/* matplotlib defines pybind11 type_casters for ClipPath, SketchParams, Dashes
+   and GCAgg here, converting the Python-side objects into the structs above.
+   Removed: vplot populates these structs directly from the C ABI layer. The
+   casters are the only thing that referenced pybind11 in this header. */
+
+#endif
