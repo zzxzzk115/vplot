@@ -962,9 +962,26 @@ namespace vriex
         // the example controls are mouse-driven sliders/checkboxes.
         void InstallWebInput()
         {
+            // The canvas renders at a fixed backing-store size (== ImGui's DisplaySize), but the
+            // page can shrink its *displayed* size via CSS (shell.html's max-width/height: 100%).
+            // The browser reports mouse coordinates (targetX/Y) in that displayed CSS space, so
+            // when the canvas is scaled down they must be scaled back up into backing space --
+            // otherwise the cursor, and every popup/combo anchored to it, drifts increasingly the
+            // smaller the window (they line up only at 1:1, e.g. fullscreen). A block-scope static
+            // carries the backing size into the captureless callback (which must stay convertible
+            // to a C function pointer); emscripten_get_element_css_size gives the live CSS size.
+            static double s_fbW = 0.0, s_fbH = 0.0;
+            s_fbW = double(width);
+            s_fbH = double(height);
+
             emscripten_set_mousemove_callback(
                 "#canvas", nullptr, EM_FALSE, [](int, const EmscriptenMouseEvent* e, void*) -> EM_BOOL {
-                    ImGui::GetIO().AddMousePosEvent(float(e->targetX), float(e->targetY));
+                    double cssW = 0.0;
+                    double cssH = 0.0;
+                    emscripten_get_element_css_size("#canvas", &cssW, &cssH);
+                    const float sx = cssW > 0.0 ? float(s_fbW / cssW) : 1.0f;
+                    const float sy = cssH > 0.0 ? float(s_fbH / cssH) : 1.0f;
+                    ImGui::GetIO().AddMousePosEvent(float(e->targetX) * sx, float(e->targetY) * sy);
                     return EM_FALSE;
                 });
             emscripten_set_mousedown_callback(

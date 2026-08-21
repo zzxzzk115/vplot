@@ -12,6 +12,7 @@
 #include "demos.h"
 
 #include <cstdio>
+#include <cstring>
 #include <string>
 #include <vector>
 
@@ -202,8 +203,36 @@ int main(int, char **)
         ImGui::Separator();
         auto export_as = [&](const char *ext) {
             std::string path = std::string("vplot_") + info.slug + "." + ext;
-            export_status = describe_save(vplFigureSaveFig(figure, path.c_str(), nullptr),
-                                          path.c_str());
+            const VplResult r = vplFigureSaveFig(figure, path.c_str(), nullptr);
+#if defined(__EMSCRIPTEN__)
+            /* On the web the file lands in Emscripten's in-memory filesystem, invisible to
+             * the user -- so hand the bytes to the browser as a download, then unlink them. */
+            if (r == VplResult_Success) {
+                const char *mime = std::strcmp(ext, "svg") == 0   ? "image/svg+xml"
+                                   : std::strcmp(ext, "pdf") == 0 ? "application/pdf"
+                                                                  : "image/png";
+                /* clang-format off */
+                EM_ASM({
+                    var path = UTF8ToString($0);
+                    var mime = UTF8ToString($1);
+                    try {
+                        var blob = new Blob([FS.readFile(path)], { type: mime });
+                        var url  = URL.createObjectURL(blob);
+                        var a    = document.createElement('a');
+                        a.href = url; a.download = path;
+                        document.body.appendChild(a); a.click(); a.remove();
+                        URL.revokeObjectURL(url);
+                        FS.unlink(path);
+                    } catch (err) { console.error('vplot export download failed:', err); }
+                }, path.c_str(), mime);
+                /* clang-format on */
+                export_status = std::string("downloaded ") + path;
+            } else {
+                export_status = describe_save(r, path.c_str());
+            }
+#else
+            export_status = describe_save(r, path.c_str());
+#endif
         };
         if (ImGui::Button("Export SVG")) {
             export_as("svg");
