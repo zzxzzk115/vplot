@@ -118,8 +118,9 @@ class FontEngine
        failing the whole figure. */
     bool load_face(const std::string &path);
 
-    /* Searches a few likely locations for the bundled DejaVu Sans, so examples
-       and tests work without being told where the assets live. */
+    /* Loads the compiled-in DejaVu Sans. No filesystem access and no search
+       path, so a linked-in vplot always has a face -- see the note in the
+       definition for why this is not a lookup any more. */
     bool load_default_face();
 
     bool ok() const { return m_face != nullptr; }

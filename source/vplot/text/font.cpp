@@ -1,5 +1,7 @@
 #include "font.h"
 
+#include "dejavu_sans_ttf.h"
+
 #include <algorithm>
 #include <cmath>
 
@@ -112,22 +114,37 @@ bool FontEngine::load_face(const std::string &path)
 
 bool FontEngine::load_default_face()
 {
-    /* The font ships in the repo, so the search covers running from the build
-       dir, the project root, or an installed layout. */
-    static const char *candidates[] = {
-        "assets/fonts/DejaVuSans.ttf",
-        "../assets/fonts/DejaVuSans.ttf",
-        "../../assets/fonts/DejaVuSans.ttf",
-        "../../../assets/fonts/DejaVuSans.ttf",
-        "../../../../assets/fonts/DejaVuSans.ttf",
-    };
-
-    for (const char *path : candidates) {
-        if (load_face(path)) {
-            return true;
-        }
+    if (m_library == nullptr) {
+        return false;
     }
-    return false;
+    if (m_face != nullptr) {
+        FT_Done_Face(as_face(m_face));
+        m_face = nullptr;
+        m_face_path.clear();
+    }
+
+    /* The default face is compiled in rather than searched for. It used to be a
+       walk up from the working directory to assets/fonts, which works in this
+       repo and nowhere else -- a consumer linking vplot as a package got a
+       library that drew axes correctly and every label not at all, because text
+       is skipped, not failed, when there is no face. Embedding also pins the
+       metrics: matplotlib lays out against this exact face, so a figure is the
+       same on a machine that has never heard of DejaVu.
+
+       FT_New_Memory_Face does not copy, so the buffer has to outlive the face.
+       kDejaVuSans has static storage duration, which satisfies that. */
+    FT_Face face = nullptr;
+    if (FT_New_Memory_Face(as_library(m_library),
+                           reinterpret_cast<const FT_Byte *>(kDejaVuSans),
+                           static_cast<FT_Long>(kDejaVuSansSize),
+                           0,
+                           &face) != 0) {
+        return false;
+    }
+
+    m_face = face;
+    m_face_path = "<embedded DejaVuSans>";
+    return true;
 }
 
 bool FontEngine::set_size(const FontProps &font, double dpi) const
