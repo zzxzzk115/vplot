@@ -70,8 +70,6 @@ int main(int, char **)
     VriTextureDesc td {};
     td.type = VriTextureType_2D;
     td.format = VriFormat_RGBA8_UNORM;
-    td.width = fig_w;
-    td.height = fig_h;
     td.depth = 1;
     td.mipNum = 1;
     td.layerNum = 1;
@@ -79,24 +77,66 @@ int main(int, char **)
     td.usage = VriTextureUsage_TransferDst | VriTextureUsage_ShaderResource;
     td.memoryLocation = VriMemoryLocation_Device;
 
-    VriTexture *texture = nullptr;
-    if (c.CreateTexture(app.dev, &td, &texture) != VriResult_Success) {
-        app.Fail("CreateTexture failed");
-    }
-
     VriTextureViewDesc vd {};
-    vd.texture = texture;
     vd.viewType = VriTextureViewType_2D;
     vd.format = VriFormat_Unknown;
     vd.aspect = VriImageAspect_Color;
 
+    VriTexture *texture = nullptr;
     VriDescriptor *view = nullptr;
-    if (c.CreateTextureView(app.dev, &vd, &view) != VriResult_Success) {
-        app.Fail("CreateTextureView failed");
-    }
-    const auto texture_id = static_cast<ImTextureID>(reinterpret_cast<uintptr_t>(view));
+    ImTextureID texture_id = 0;
+
+    /* The figure's pixel size is not the same for every demo (the "Page size & DPI"
+     * demo renders at 660x440, the rest at 720x540), so a texture created once at a
+     * fixed size is wrong for the others: uploading W-wide pixels into an M-wide
+     * texture skews every row (misalignment) over stale contents (flicker). Recreate
+     * the texture whenever the figure size changes. DeviceWaitIdle first so no in-flight
+     * frame still samples the old one; this is driven from onGui *before* the figure
+     * image is recorded, so the frame that draws it also created what it references. */
+    auto ensure_texture = [&](uint32_t w, uint32_t h) {
+        if (texture != nullptr && w == fig_w && h == fig_h) {
+            return;
+        }
+        c.DeviceWaitIdle(app.dev);
+        if (view != nullptr) {
+            app.guiApi.FreeImguiTexture(app.gui, view);
+            c.DestroyDescriptor(view);
+            view = nullptr;
+        }
+        if (texture != nullptr) {
+            c.DestroyTexture(texture);
+            texture = nullptr;
+        }
+        fig_w = w;
+        fig_h = h;
+        pixels.assign(static_cast<size_t>(fig_w) * fig_h * 4u, 0u);
+        td.width = fig_w;
+        td.height = fig_h;
+        if (c.CreateTexture(app.dev, &td, &texture) != VriResult_Success) {
+            app.Fail("CreateTexture failed");
+        }
+        vd.texture = texture;
+        if (c.CreateTextureView(app.dev, &vd, &view) != VriResult_Success) {
+            app.Fail("CreateTextureView failed");
+        }
+        texture_id = static_cast<ImTextureID>(reinterpret_cast<uintptr_t>(view));
+        texture_dirty = true;
+    };
+    ensure_texture(fig_w, fig_h);
 
     app.onGui = [&]() {
+        /* Rebuild here (before the image below is recorded), not in onUpdate: BeginGui
+         * runs before onUpdate, so a texture recreated in onUpdate would be freed out
+         * from under the draw command this frame already emitted. */
+        if (figure_dirty) {
+            rebuild();
+            figure_dirty = false;
+            uint32_t nw = 0;
+            uint32_t nh = 0;
+            vplFigureGetPixelSize(figure, &nw, &nh);
+            ensure_texture(nw, nh);
+        }
+
         ImGui::SetNextWindowSize(ImVec2(1340.0f, 840.0f), ImGuiCond_FirstUseEver);
         ImGui::Begin("vplot demo");
 
@@ -259,10 +299,6 @@ int main(int, char **)
     };
 
     app.onUpdate = [&](uint64_t) {
-        if (figure_dirty) {
-            rebuild();
-            figure_dirty = false;
-        }
         if (!texture_dirty || figure == nullptr) {
             return;
         }
