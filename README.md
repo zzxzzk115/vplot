@@ -18,6 +18,9 @@ live into an ImGui panel inside a renderer.
 > is not yet stable. See [`docs/API-COVERAGE.md`](docs/API-COVERAGE.md) for the
 > exact per-method status and [`TODO.md`](TODO.md) for the roadmap.
 
+**Run it in your browser** — the demo browser compiled to WebAssembly, drawn
+live on WebGPU or WebGL 2: **[zzxzzk115.github.io/vplot](https://zzxzzk115.github.io/vplot/)**.
+
 ## Features
 
 - **Plotting**: lines with styles and markers, scatter with per-point colour and
@@ -133,6 +136,9 @@ xmake run example-demo
 ```
 
 ![The vplot demo browser: a live figure drawn into an ImGui panel, with per-feature controls and one-click export to SVG, PDF and PNG](docs/images/imgui_demo.png)
+
+The same browser runs on the web, compiled to WebAssembly — no build required:
+[zzxzzk115.github.io/vplot/examples](https://zzxzzk115.github.io/vplot/examples/).
 
 Or render the whole catalogue to PNG without opening a window:
 
