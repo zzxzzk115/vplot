@@ -16,7 +16,7 @@
 cmake_minimum_required(VERSION 3.21)
 
 project(vplot
-    VERSION 0.1.0
+    VERSION 0.1.1
     DESCRIPTION "Publication-quality plotting behind a pure C ABI"
     HOMEPAGE_URL "https://github.com/zzxzzk115/vplot"
     LANGUAGES C CXX)
