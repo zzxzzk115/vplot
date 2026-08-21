@@ -10,7 +10,9 @@ vplot ports matplotlib's rendering stack to C++23 and exposes it through a C
 header, so the same figure can be exported as PNG/SVG/PDF for a paper or drawn
 live into an ImGui panel inside a renderer.
 
-> **Status: 0.1.0 — early but usable.** Every plotting command in matplotlib's
+![A gallery of plots rendered by vplot: styled lines, scatter, filled contours, streamlines, a spectrogram, and violin plots](docs/images/gallery.png)
+
+> **Status: 0.1.1 — early but usable.** Every plotting command in matplotlib's
 > headless API surface exists, and about two thirds of them are complete against
 > matplotlib's keyword arguments. The rest are usable at their defaults. The API
 > is not yet stable. See [`docs/API-COVERAGE.md`](docs/API-COVERAGE.md) for the
@@ -130,6 +132,8 @@ it live, export it:
 xmake run example-demo
 ```
 
+![The vplot demo browser: a live figure drawn into an ImGui panel, with per-feature controls and one-click export to SVG, PDF and PNG](docs/images/imgui_demo.png)
+
 Or render the whole catalogue to PNG without opening a window:
 
 ```bash
@@ -146,7 +150,7 @@ differential harness. To consume the library, a hand-written `CMakeLists.txt` at
 the root builds and installs a single target:
 
 ```cmake
-CPMAddPackage("gh:zzxzzk115/vplot@0.1.0")
+CPMAddPackage("gh:zzxzzk115/vplot@0.1.1")
 target_link_libraries(app PRIVATE vplot::vplot)
 ```
 
