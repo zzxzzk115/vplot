@@ -32,3 +32,6 @@ vsxmake*/
 .venv-mpl/
 __pycache__/
 *.pyc
+
+# GitHub Pages site output (scripts/build_site.sh)
+_site/

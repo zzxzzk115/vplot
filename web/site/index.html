@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>vplot — matplotlib-quality plots behind a C ABI</title>
+  <meta name="description" content="vplot ports matplotlib's rendering core to C++23 and exposes it through a pure C ABI — export PNG/SVG/PDF or draw live into an ImGui panel, with no Python at runtime.">
+  <link rel="stylesheet" href="style.css?v={{VPLOT_SHA}}">
+</head>
+<body>
+  <div class="wrap">
+    <header class="topbar">
+      <a class="brand" href="./"><span class="dot"></span>vplot<span class="sub">· plotting behind a C ABI</span></a>
+      <nav class="nav">
+        <a class="active" href="./">Home</a>
+        <a href="examples/">Examples</a>
+        <a href="https://github.com/zzxzzk115/vplot">GitHub</a>
+      </nav>
+    </header>
+
+    <section class="hero">
+      <h1>vplot</h1>
+      <p class="tagline">Publication-quality plotting. No Python, no runtime dependencies.</p>
+      <p class="blurb">
+        vplot ports <b>matplotlib</b>'s rendering stack to C++23 and exposes it through a
+        pure&nbsp;C header, so the same figure can be exported as <b>PNG</b>/<b>SVG</b>/<b>PDF</b>
+        for a paper or drawn live into an <b>ImGui</b> panel inside a renderer. Because the
+        rasterizer is matplotlib's own, the output is verified pixel-for-pixel against it.
+      </p>
+      <div class="cta">
+        <a class="btn primary" href="examples/">&#9654;&#xFE0E; Run the demo in your browser</a>
+        <a class="btn ghost" href="https://github.com/zzxzzk115/vplot">GitHub &#8599;</a>
+      </div>
+    </section>
+
+    <section class="block">
+      <h2>a transcription of matplotlib</h2>
+      <p class="note">The header-only C++ wrapper mirrors matplotlib's API closely enough that porting Python is nearly a transcription — keyword arguments become an options struct, and <code>std::vector</code> or <code>{1, 2, 3}</code> are accepted directly.</p>
+      <div class="panel">
+        <pre class="code"><span class="c">// #include "vpl/vpl.hpp"</span>
+vplot::Figure fig;               <span class="c">// fig = plt.figure()</span>
+<span class="k">auto</span> ax = fig.<span class="f">subplots</span>();        <span class="c">// ax  = fig.subplots()</span>
+
+ax.<span class="f">plot</span>(xs, ys, {.label = <span class="s">"sin"</span>});   <span class="c">// ax.plot(xs, ys, label="sin")</span>
+ax.<span class="f">plot</span>(xs, ys2, <span class="s">"r--"</span>);             <span class="c">// ax.plot(xs, ys2, "r--")</span>
+ax.<span class="f">legend</span>();                         <span class="c">// ax.legend()</span>
+
+fig.<span class="f">savefig</span>(<span class="s">"figure.pdf"</span>);       <span class="c">// also .svg and .png</span></pre>
+      </div>
+    </section>
+
+    <section class="block">
+      <h2>what it draws</h2>
+      <p class="note">Every plotting command in matplotlib's headless API surface exists; about two thirds are complete against matplotlib's keyword arguments, and the rest are usable at their defaults. See the <a href="https://github.com/zzxzzk115/vplot/blob/main/docs/API-COVERAGE.md">per-method coverage</a>.</p>
+      <div class="panel tablewrap">
+        <table>
+          <thead><tr><th>Area</th><th>Commands</th></tr></thead>
+          <tbody>
+            <tr><td>Lines &amp; markers</td><td>plot, scatter, step, stem, stairs, errorbar, format strings</td></tr>
+            <tr><td>Bars &amp; distributions</td><td>bar, barh, hist, boxplot, violinplot, pie, stackplot</td></tr>
+            <tr><td>Bands &amp; regions</td><td>fill_between, fill_betweenx, fill, spans, reference lines</td></tr>
+            <tr><td>2-D fields</td><td>imshow, matshow, pcolormesh, contour, contourf, hexbin, tripcolor</td></tr>
+            <tr><td>Vector fields</td><td>quiver, barbs, streamplot</td></tr>
+            <tr><td>Spectral</td><td>psd, csd, cohere, specgram, magnitude/phase/angle spectrum</td></tr>
+            <tr><td>Axes &amp; layout</td><td>log scales, twin axes, colorbars, subplot grids, tight_layout</td></tr>
+            <tr><td>Output</td><td>RGBA buffer, PNG, SVG, PDF (text as glyph outlines)</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="block">
+      <h2>run it here</h2>
+      <p class="note">The desktop demo browser is compiled to WebAssembly and drawn through <b>WebGPU</b> or <b>WebGL&nbsp;2</b> — the same code that runs on Vulkan, Direct3D&nbsp;12, and Metal on desktop, via <a href="https://github.com/zzxzzk115/VRI">VRI</a>. WebGPU needs a recent Chrome/Edge; WebGL&nbsp;2 runs everywhere.</p>
+      <div class="cta" style="justify-content:flex-start">
+        <a class="btn ghost" href="examples/">Browse the examples &#8594;</a>
+      </div>
+    </section>
+
+    <footer>
+      <div>vplot is released under the <a href="https://github.com/zzxzzk115/vplot/blob/main/LICENSE">MIT License</a>.</div>
+      <div>Built on <a href="https://matplotlib.org/">matplotlib</a>'s rendering core and <a href="https://en.wikipedia.org/wiki/Anti-Grain_Geometry">Anti-Grain Geometry</a>.</div>
+    </footer>
+  </div>
+</body>
+</html>

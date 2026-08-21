@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>VRI</title>
+  <title>vplot</title>
   <style>
     :root {
       --bg-0: #0b0b0f;
@@ -78,7 +78,7 @@
 <body>
   <div class="layout">
     <header class="topbar">
-      <span class="brand"><span class="dot"></span><span id="brand">VRI</span><span class="sub" id="sub"></span></span>
+      <span class="brand"><span class="dot"></span><span id="brand">vplot</span><span class="sub" id="sub"></span></span>
       <!-- Resolves to the gallery index when deployed next to it on the website;
            harmless (a directory listing) under local emrun. -->
       <a class="sub" href="./">&larr; gallery</a>
@@ -164,7 +164,7 @@
       };
       Module.onAbort = function (what) { append("ABORT: " + what, "e"); overlay.classList.remove("hidden"); statusEl.textContent = "aborted"; };
       Module.vriSetTitle = function (name, api) {
-        document.title = "VRI " + name + " (" + api + ")";
+        document.title = "vplot " + name + " (" + api + ")";
         var s = document.getElementById("sub"); if (s) s.textContent = "· " + name + " · " + api;
         setActiveBackend(api === "WebGPU" ? "webgpu" : "webgl"); /* reflect what VRI actually picked */
       };

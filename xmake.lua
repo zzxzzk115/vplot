@@ -70,6 +70,13 @@ add_rules("clangd.config")
 -- add repositories
 add_repositories("my-xmake-repo https://github.com/zzxzzk115/xmake-repo.git backup")
 
+-- Web (Emscripten) build: VRI defaults to Vulkan, which does not exist on wasm,
+-- so enable the WebGPU and WebGL2 backends instead. VriGraphicsAPI_Auto then
+-- picks WebGPU first and falls back to WebGL2.
+if is_plat("wasm") then
+    add_requires("vri", {configs = {vulkan = false, gl = true, wgpu = true}})
+end
+
 -- include external libraries
 includes("external")
 

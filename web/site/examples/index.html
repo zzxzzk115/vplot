@@ -1,0 +1,103 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>vplot Examples — run them in your browser</title>
+  <meta name="description" content="vplot's examples, compiled to WebAssembly. Run each one on WebGPU or WebGL 2, straight from your browser.">
+  <link rel="stylesheet" href="../style.css?v={{VPLOT_SHA}}">
+</head>
+<body>
+  <div class="wrap">
+    <header class="topbar">
+      <a class="brand" href="../"><span class="dot"></span>vplot<span class="sub">· examples</span></a>
+      <nav class="nav">
+        <a href="../">Home</a>
+        <a class="active" href="./">Examples</a>
+        <a href="https://github.com/zzxzzk115/vplot">GitHub</a>
+      </nav>
+    </header>
+
+    <section class="block">
+      <h2>examples</h2>
+      <p class="note">
+        Each example below is the real vplot example binary compiled to WebAssembly — the same
+        code that runs on desktop. Pick a backend:
+        <b>WebGPU</b> needs a recent Chrome/Edge (or Firefox/Safari with WebGPU enabled);
+        <b>WebGL&nbsp;2</b> runs everywhere. Everything you draw can be exported to
+        <b>SVG</b>, <b>PDF</b>, and <b>PNG</b> from inside the demo.
+      </p>
+      <div class="grid" id="grid"></div>
+    </section>
+
+    <footer>
+      <div><a href="../">vplot</a> · <a href="https://github.com/zzxzzk115/vplot">GitHub</a> · MIT License</div>
+    </footer>
+  </div>
+
+  <script src="examples.js?v={{VPLOT_SHA}}"></script>
+  <script>
+    (function () {
+      /* Cheap deterministic per-example hue so cards are tinted without image assets. */
+      function hue(name) {
+        var h = 0;
+        for (var i = 0; i < name.length; i++) h = (h * 31 + name.charCodeAt(i)) >>> 0;
+        return h % 360;
+      }
+
+      var grid = document.getElementById("grid");
+      VPLOT_EXAMPLES.forEach(function (ex, i) {
+        var h = hue(ex.name);
+        var card = document.createElement("article");
+        card.className = "card";
+
+        var thumb = document.createElement("div");
+        thumb.className = "thumb";
+        thumb.style.background =
+          "linear-gradient(135deg, hsl(" + h + ", 55%, 22%), hsl(" + ((h + 60) % 360) + ", 60%, 12%))";
+        var num = document.createElement("span");
+        num.className = "num";
+        num.textContent = String(i + 1).padStart(2, "0") + " / example-" + ex.name;
+        thumb.appendChild(num);
+
+        var body = document.createElement("div");
+        body.className = "body";
+
+        var title = document.createElement("h3");
+        title.textContent = ex.title;
+
+        var desc = document.createElement("p");
+        desc.className = "desc";
+        desc.textContent = ex.desc;
+
+        var tags = document.createElement("div");
+        tags.className = "tags";
+        (ex.tags || []).forEach(function (t) {
+          var tag = document.createElement("span");
+          tag.className = "tag";
+          tag.textContent = t;
+          tags.appendChild(tag);
+        });
+
+        var run = document.createElement("div");
+        run.className = "run";
+        [["webgpu", "WebGPU", "gpu"], ["webgl", "WebGL 2", ""]].forEach(function (b) {
+          var a = document.createElement("a");
+          a.href = "example-" + ex.name + ".html?backend=" + b[0];
+          a.textContent = b[1];
+          if (b[2]) a.className = b[2];
+          run.appendChild(a);
+        });
+
+        body.appendChild(title);
+        body.appendChild(desc);
+        body.appendChild(tags);
+        body.appendChild(run);
+        card.appendChild(thumb);
+        card.appendChild(body);
+        grid.appendChild(card);
+      });
+    })();
+  </script>
+</body>
+</html>
