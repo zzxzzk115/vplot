@@ -2,27 +2,22 @@
 
 vplot renders text only when FreeType has a face, and a face used to mean a file on disk. That is
 fine inside this repo, where load_default_face() walks up to assets/fonts, and wrong everywhere
-else: a consumer who links vplot as a package gets a library that draws perfect axes and silently
-no labels, because vplot skips text rather than failing when it has no font. Embedding the default
-face removes the failure mode entirely - the library is self-contained and matplotlib's exact
-metrics come along with it.
+else: a consumer linking vplot as a package got a library that drew perfect axes and silently no
+labels, because vplot skips text rather than failing when it has no font. Embedding the default
+face removes the failure and pins the metrics matplotlib lays out against.
 
-The bytes are emitted as octal-escaped string literals, not as a `{0x00, ...}` initializer list.
-Two reasons:
-  - MSVC compiles a 756 KB initializer list slowly enough to notice; concatenated literals are
-    handled by the lexer and cost almost nothing.
-  - octal escapes are exactly three digits, so they cannot swallow the next character the way a
-    two-digit \\xNN escape does when the following byte is also a hex digit.
-
-Each literal is kept well under MSVC's 65535-character limit for a single string literal.
+The bytes are emitted as octal-escaped string literals rather than a {0x00, ...} initializer list:
+MSVC compiles 756 KB of initializer list slowly, and octal escapes are exactly three digits so they
+cannot swallow a following hex digit the way a two-digit hex escape can. Each literal stays well
+inside MSVC's
+65535-character limit.
 
 Usage:  python tools/embed_font.py
 """
 import pathlib
 import sys
 
-# Bytes per emitted literal. Four source characters per byte, so 4096 bytes is ~16 KB of literal -
-# comfortably inside the 65535 limit with room for the compiler's own accounting.
+# Four source characters per byte, so 4096 bytes is ~16 KB of literal.
 CHUNK = 4096
 PER_LINE = 24
 

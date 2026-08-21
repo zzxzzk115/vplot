@@ -123,16 +123,15 @@ bool FontEngine::load_default_face()
         m_face_path.clear();
     }
 
-    /* The default face is compiled in rather than searched for. It used to be a
-       walk up from the working directory to assets/fonts, which works in this
-       repo and nowhere else -- a consumer linking vplot as a package got a
-       library that drew axes correctly and every label not at all, because text
-       is skipped, not failed, when there is no face. Embedding also pins the
-       metrics: matplotlib lays out against this exact face, so a figure is the
-       same on a machine that has never heard of DejaVu.
+    /* Compiled in rather than searched for. It used to be a walk up from the
+       working directory to assets/fonts, which works in this repo and nowhere
+       else: a consumer linking vplot as a package got a library that drew axes
+       correctly and every label not at all, since text is skipped, not failed,
+       when there is no face. Embedding also pins the metrics -- matplotlib lays
+       out against this exact face.
 
-       FT_New_Memory_Face does not copy, so the buffer has to outlive the face.
-       kDejaVuSans has static storage duration, which satisfies that. */
+       FT_New_Memory_Face does not copy, so the buffer must outlive the face;
+       kDejaVuSans has static storage duration. */
     FT_Face face = nullptr;
     if (FT_New_Memory_Face(as_library(m_library),
                            reinterpret_cast<const FT_Byte *>(kDejaVuSans),
