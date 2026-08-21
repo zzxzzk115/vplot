@@ -12,7 +12,7 @@ live into an ImGui panel inside a renderer.
 
 ![A gallery of plots rendered by vplot: styled lines, scatter, filled contours, streamlines, a spectrogram, and violin plots](docs/images/gallery.png)
 
-> **Status: 0.1.1 — early but usable.** Every plotting command in matplotlib's
+> **Status: 0.1.2 — early but usable.** Every plotting command in matplotlib's
 > headless API surface exists, and about two thirds of them are complete against
 > matplotlib's keyword arguments. The rest are usable at their defaults. The API
 > is not yet stable. See [`docs/API-COVERAGE.md`](docs/API-COVERAGE.md) for the
@@ -156,7 +156,7 @@ differential harness. To consume the library, a hand-written `CMakeLists.txt` at
 the root builds and installs a single target:
 
 ```cmake
-CPMAddPackage("gh:zzxzzk115/vplot@0.1.1")
+CPMAddPackage("gh:zzxzzk115/vplot@0.1.2")
 target_link_libraries(app PRIVATE vplot::vplot)
 ```
 
