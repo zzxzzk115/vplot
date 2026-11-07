@@ -896,6 +896,31 @@ vpl::Figure make_hexbin_log_marginals()
     return fig;
 }
 
+/* Mirrors case_pie_shadow_donut in tools/gen_references.py. */
+vpl::Figure make_pie_shadow_donut()
+{
+    const double sizes[4] = {30, 20, 45, 5};
+    const double explode[4] = {0, 0.1, 0, 0};
+    vpl::Figure fig;
+    VplAxes *ax1 = reinterpret_cast<VplAxes *>(&fig.add_subplot(1, 2, 1));
+    VplPieDesc d{};
+    d.structSize = sizeof(d);
+    d.shadow = 1;
+    d.explode = explode;
+    d.startAngle = 90.0;
+    vplAxesPieFull(ax1, sizes, 4, &d);
+
+    VplAxes *ax2 = reinterpret_cast<VplAxes *>(&fig.add_subplot(1, 2, 2));
+    d = VplPieDesc{};
+    d.structSize = sizeof(d);
+    d.wedgeWidth = 0.4;
+    d.wedgeEdgeColorSpec = "w";
+    d.wedgeLineWidth = 2.0;
+    vplAxesPieFull(ax2, sizes, 4, &d);
+    vplAxesPieLabelFormat(ax2, "{absval:d} ({frac:.0%})", 0.8, 0.0, VplPieLabelAlign_Auto, 0);
+    return fig;
+}
+
 /* Mirrors case_quiver_colors in tools/gen_references.py. */
 vpl::Figure make_quiver_colors()
 {
@@ -3588,6 +3613,9 @@ int main()
 
     vpl::Figure hlm = make_hexbin_log_marginals();
     compare("hexbin_log_marginals", hlm, fonts);
+
+    vpl::Figure psd = make_pie_shadow_donut();
+    compare("pie_shadow_donut", psd, fonts);
 
     vpl::Figure fixed = make_fixed_ticks();
     compare("fixed_ticks", fixed, fonts);

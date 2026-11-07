@@ -1289,6 +1289,32 @@ int main(void)
               "pieLabelFull(outer, rotated)");
         expect_invalid(vplAxesPieLabelFull(pa, pl, 3, 1.2, 9.0, (VplPieLabelAlign)7, 0),
                        "pieLabelFull(unknown alignment)");
+        check(vplAxesPieLabelFormat(pa, "{absval:d} ({frac:.1%}) {{x}}", 0.5, 0.0,
+                                    VplPieLabelAlign_Center, 0),
+              "pieLabelFormat");
+        check(vplAxesPieLabelFormat(pa, "{absval:>+08,.2f}|{frac}", 0.5, 0.0,
+                                    VplPieLabelAlign_Auto, 0),
+              "pieLabelFormat(spec)");
+        expect_invalid(vplAxesPieLabelFormat(pa, "{value}", 0.5, 0.0, VplPieLabelAlign_Auto, 0),
+                       "pieLabelFormat(unknown field)");
+        expect_invalid(vplAxesPieLabelFormat(pa, "{frac:d}", 0.5, 0.0, VplPieLabelAlign_Auto, 0),
+                       "pieLabelFormat(d on a fraction)");
+        expect_invalid(vplAxesPieLabelFormat(pa, "{frac", 0.5, 0.0, VplPieLabelAlign_Auto, 0),
+                       "pieLabelFormat(unclosed field)");
+
+        pd2.shadow = 1;
+        pd2.wedgeWidth = 0.3;
+        pd2.wedgeEdgeColorSpec = "white";
+        check(vplAxesPieFull(pa, pv, 3, &pd2), "pieFull(shadow, donut)");
+        pd2.hasShadowParams = 1;
+        pd2.shadowShade = 1.5;
+        expect_invalid(vplAxesPieFull(pa, pv, 3, &pd2), "pieFull(shade > 1)");
+        pd2.hasShadowParams = 0;
+        pd2.wedgeEdgeColorSpec = "not-a-colour";
+        expect_invalid(vplAxesPieFull(pa, pv, 3, &pd2), "pieFull(bad edge colour)");
+        pd2.wedgeEdgeColorSpec = NULL;
+        pd2.shadow = 0;
+        pd2.wedgeWidth = 0.0;
 
         pd2.autopct = "%d";
         expect_invalid(vplAxesPieFull(pa, pv, 3, &pd2), "pieFull(integer autopct)");

@@ -158,8 +158,10 @@ STATUS = {
         "vplAxesPieFull",
         "labels, autopct (a %-format), explode, startangle, radius, "
         "counterclock, normalize, center, frame, rotatelabels, colors and the "
-        "label/pct distances; vplAxesPie is the bare-wedges convenience. No "
-        "shadow, hatch, wedgeprops or callable autopct",
+        "label/pct distances, shadow (with ox/oy/shade), and wedgeprops' "
+        "width, edgecolor and linewidth; vplAxesPie is the bare-wedges "
+        "convenience. No hatch and no callable autopct (the %-format, or "
+        "vplAxesPieLabelFormat, covers what one usually computes)",
     ),
     "imshow": (
         PARTIAL,
@@ -274,11 +276,12 @@ STATUS = {
         "horizontal orientation, no explicit positions, no colour list",
     ),
     "pie_label": (
-        PARTIAL,
+        FULL,
         "vplAxesPieLabelFull",
-        "explicit labels at a chosen distance with alignment (auto, center, "
-        "outer) and rotate=; vplAxesPieLabel is the centred convenience. No "
-        "{absval}/{frac} format strings",
+        "explicit labels, or a {absval}/{frac} format string through "
+        "vplAxesPieLabelFormat, at a chosen distance with alignment (auto, "
+        "center, outer) and rotate=; vplAxesPieLabel is the centred "
+        "convenience",
     ),
     "pcolorfast": (
         FULL,

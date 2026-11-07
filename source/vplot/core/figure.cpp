@@ -1313,12 +1313,30 @@ void Axes::pie(const double *values, std::size_t n, const PieOptions &opt)
         const double cy = opt.center_y + expl * std::sin(thetam);
         const double t1 = 360.0 * std::min(theta1, theta2);
         const double t2 = 360.0 * std::max(theta1, theta2);
-        pie_wedges.push_back(PieWedge{t1, t2, cx, cy, opt.radius, frac});
+        pie_wedges.push_back(PieWedge{t1, t2, cx, cy, opt.radius, frac, values[i]});
 
-        /* Wedge: the unit arc and a line to the centre, closed, then scaled
-           by the radius and moved to the centre. */
-        Path unit = Path::arc(t1, t2);
-        unit.line_to(0.0, 0.0);
+        /* matplotlib's Wedge._recompute_path: a full turn is drawn from 0 to
+           360 with the centre (or inner ring) reached by a MOVETO; otherwise
+           the arc runs to the centre -- or, with a width, back along the
+           inner ring reversed -- and closes. Then scaled and moved. */
+        const bool full = std::fabs((t2 - t1) - 360.0) <= 1e-12;
+        const Path arc = full ? Path::arc(0.0, 360.0) : Path::arc(t1, t2);
+        Path unit = arc;
+        const std::uint8_t connector = full ? MOVETO : LINETO;
+        if (opt.width > 0.0) {
+            const double k = (opt.radius - opt.width) / opt.radius;
+            const std::size_t m = arc.size();
+            for (std::size_t j = 0; j < m; ++j) {
+                const std::size_t src = m - 1 - j;
+                unit.vertices.push_back(arc.vertices[2 * src] * k);
+                unit.vertices.push_back(arc.vertices[2 * src + 1] * k);
+                unit.codes.push_back(j == 0 ? connector : arc.codes[j]);
+            }
+        } else {
+            unit.vertices.push_back(0.0);
+            unit.vertices.push_back(0.0);
+            unit.codes.push_back(connector);
+        }
         unit.close_poly();
         auto patch = std::make_unique<PolyPatch>();
         patch->path = unit;
@@ -1335,8 +1353,39 @@ void Axes::pie(const double *values, std::size_t n, const PieOptions &opt)
             patch->facecolor = next_patch_color();
         }
         patch->clip = false;
+        patch->alpha = opt.alpha;
+        if (opt.has_edgecolor) {
+            patch->edgecolor = opt.edgecolor;
+            patch->linewidth = opt.linewidth;
+        }
         patches.push_back(std::move(patch));
         theta1 = theta2;
+    }
+
+    /* Shadows go in front of this pie's wedges in the list: their zorder is
+       just under the wedges', so they draw first however they were added. */
+    if (opt.shadow) {
+        const std::size_t first = patches.size() - n;
+        std::vector<std::unique_ptr<PolyPatch>> shadows;
+        for (std::size_t i = first; i < patches.size(); ++i) {
+            const PolyPatch &w = *patches[i];
+            auto s = std::make_unique<PolyPatch>(w);
+            const double k = 1.0 - opt.shadow_shade;
+            const Color c = Color::rgb(k * w.facecolor.r, k * w.facecolor.g, k * w.facecolor.b);
+            s->facecolor = c;
+            s->edgecolor = c;
+            /* update_from copies the wedge's line width; the edge is now
+               drawn, since the shadow sets an edge colour. */
+            s->linewidth = opt.linewidth;
+            s->alpha = 0.5;
+            s->shift_pt_x = opt.shadow_ox;
+            s->shift_pt_y = opt.shadow_oy;
+            s->label.clear();
+            shadows.push_back(std::move(s));
+        }
+        patches.insert(patches.begin() + static_cast<std::ptrdiff_t>(first),
+                       std::make_move_iterator(shadows.begin()),
+                       std::make_move_iterator(shadows.end()));
     }
 
     aspect = 1.0;
@@ -1372,7 +1421,7 @@ void Axes::pie(const double *values, std::size_t n)
     for (std::size_t i = 0; i < n; ++i) {
         const double v = (std::isfinite(values[i]) && values[i] > 0.0) ? values[i] : 0.0;
         const double next = theta + 360.0 * v / total;
-        pie_wedges.push_back(PieWedge{theta, next});
+        pie_wedges.push_back(PieWedge{theta, next, 0.0, 0.0, 1.0, v / total, values[i]});
 
         auto patch = std::make_unique<PolyPatch>();
         /* Wedge = the arc, a line to the centre, and close. */
@@ -4957,9 +5006,11 @@ void Axes::draw_patches(Renderer &renderer, const Bbox &box, double px_per_pt,
         Path scaled;
         scaled.codes = patch->path.codes;
         scaled.vertices.reserve(patch->path.vertices.size());
+        const double shx = patch->shift_pt_x * px_per_pt;
+        const double shy = patch->shift_pt_y * px_per_pt;
         for (std::size_t i = 0; i < patch->path.size(); ++i) {
-            const double px = patch->path.vertices[2 * i];
-            const double py = patch->path.vertices[2 * i + 1];
+            const double px = patch->path.vertices[2 * i] + shx;
+            const double py = patch->path.vertices[2 * i + 1] + shy;
             scaled.vertices.push_back(patch->x_in_axes ? vx0 + px * (vx1 - vx0) : scale_x(px));
             scaled.vertices.push_back(patch->y_in_axes ? vy0 + py * (vy1 - vy0) : scale_y(py));
         }

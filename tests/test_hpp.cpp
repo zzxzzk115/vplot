@@ -77,6 +77,10 @@ int main()
                 pa.pie({1, 2, 3}, {.explode = {0, 0.1, 0}, .labels = {"a", "b", "c"},
                                    .autopct = "%1.0f%%", .startangle = 90});
                 pa.pie_label({"x", "y", "z"}, 1.2, 9.0, VplPieLabelAlign_Outer, true);
+                vplot::Figure df;
+                auto da = df.subplots();
+                da.pie({3, 2, 5}, {.wedge_width = 0.4, .wedge_edgecolor = "w", .shadow = true});
+                da.pie_label_format("{absval:d} ({frac:.0%})", 0.8);  // pie_label(pc, "{absval:d}...")
             }
             a.set_anchor("SW");                            // ax.set_anchor("SW")
             {

@@ -249,6 +249,12 @@ struct PieOpts
     bool frame = false;
     std::vector<std::string> colors;
     double fontsize = 10.0;
+    /* wedgeprops: width (a donut when > 0), edgecolor and linewidth. */
+    double wedge_width = 0.0;
+    std::optional<std::string> wedge_edgecolor;
+    double wedge_linewidth = 0.0; /* 0 means 1 */
+    /* shadow=True. */
+    bool shadow = false;
 };
 
 /* What hist returns besides its patches: matplotlib's n and bins. */
@@ -871,6 +877,10 @@ class Axes
         d.colorSpecs = colors.empty() ? nullptr : colors.data();
         d.colorCount = colors.size();
         d.fontSize = o.fontsize;
+        d.wedgeWidth = o.wedge_width;
+        d.wedgeEdgeColorSpec = o.wedge_edgecolor ? o.wedge_edgecolor->c_str() : nullptr;
+        d.wedgeLineWidth = o.wedge_linewidth;
+        d.shadow = o.shadow ? 1 : 0;
         detail::check(vplAxesPieFull(m_raw, x.data(), x.size(), &d));
     }
 
@@ -1426,6 +1436,18 @@ class Axes
     {
         detail::check(vplAxesPieLabelFull(m_raw, labels.data(), labels.size(), distance,
                                           font_size, alignment, rotate ? 1 : 0));
+    }
+
+    /* pie_label(pc, "{absval:d} ({frac:.0%})"): one Python format template
+       for every wedge. A separate name, since a braced pair of labels would
+       also read as a std::string's iterator range. */
+    void pie_label_format(const std::string &format, double distance = 0.6,
+                          double font_size = 10.0,
+                          VplPieLabelAlign alignment = VplPieLabelAlign_Auto,
+                          bool rotate = false)
+    {
+        detail::check(vplAxesPieLabelFormat(m_raw, format.c_str(), distance, font_size,
+                                            alignment, rotate ? 1 : 0));
     }
 
     /* A reference arrow and caption for the last quiver() -- quiverkey. */

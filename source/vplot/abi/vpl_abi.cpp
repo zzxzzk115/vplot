@@ -3645,6 +3645,236 @@ VplResult VPL_CALL vplAxesPieLabel(VplAxes *axes,
     VPL_CATCH
 }
 
+/* One replacement field of Python's format mini-language applied to a
+   number: [[fill]align][sign][z][#][0][width][grouping][.precision][type]. */
+static bool py_format_number(double v, const std::string &spec, std::string &out)
+{
+    std::size_t i = 0;
+    char fill = ' ';
+    char align = '\0';
+    const auto is_align = [](char c) { return c == '<' || c == '>' || c == '^' || c == '='; };
+    if (spec.size() >= 2 && is_align(spec[1])) {
+        fill = spec[0];
+        align = spec[1];
+        i = 2;
+    } else if (!spec.empty() && is_align(spec[0])) {
+        align = spec[0];
+        i = 1;
+    }
+    char sign = '-';
+    if (i < spec.size() && (spec[i] == '+' || spec[i] == '-' || spec[i] == ' ')) {
+        sign = spec[i++];
+    }
+    if (i < spec.size() && spec[i] == 'z') {
+        ++i;
+    }
+    if (i < spec.size() && spec[i] == '#') {
+        ++i;
+    }
+    if (i < spec.size() && spec[i] == '0') {
+        if (align == '\0') {
+            fill = '0';
+            align = '=';
+        }
+        ++i;
+    }
+    std::size_t width = 0;
+    while (i < spec.size() && spec[i] >= '0' && spec[i] <= '9') {
+        width = width * 10 + static_cast<std::size_t>(spec[i++] - '0');
+    }
+    char group = '\0';
+    if (i < spec.size() && (spec[i] == ',' || spec[i] == '_')) {
+        group = spec[i++];
+    }
+    int precision = -1;
+    if (i < spec.size() && spec[i] == '.') {
+        ++i;
+        precision = 0;
+        bool any = false;
+        while (i < spec.size() && spec[i] >= '0' && spec[i] <= '9') {
+            precision = precision * 10 + (spec[i++] - '0');
+            any = true;
+        }
+        if (!any || precision > 100) {
+            return false;
+        }
+    }
+    char type = '\0';
+    if (i < spec.size()) {
+        type = spec[i++];
+    }
+    if (i != spec.size() || !std::isfinite(v) || width > 256) {
+        return false;
+    }
+
+    const bool negative = std::signbit(v) && v != 0.0;
+    const double a = std::fabs(v);
+    char buf[512];
+    std::string body;
+    std::string suffix;
+    switch (type) {
+    case 'd':
+    case 'n':
+        if (precision >= 0 || a != std::floor(a) || a > 9.0e15) {
+            return false; /* Python: 'd' needs an integer */
+        }
+        std::snprintf(buf, sizeof(buf), "%.0f", a);
+        body = buf;
+        break;
+    case '%':
+        std::snprintf(buf, sizeof(buf), "%.*f", precision < 0 ? 6 : precision, a * 100.0);
+        body = buf;
+        suffix = "%";
+        break;
+    case 'f':
+    case 'F':
+    case 'e':
+    case 'E':
+    case 'g':
+    case 'G': {
+        const char f[5] = {'%', '.', '*', type, '\0'};
+        std::snprintf(buf, sizeof(buf), f, precision < 0 ? 6 : precision, a);
+        body = buf;
+        break;
+    }
+    case '\0':
+        if (precision >= 0) {
+            std::snprintf(buf, sizeof(buf), "%.*g", precision == 0 ? 1 : precision, a);
+            body = buf;
+        } else if (a == std::floor(a) && a < 1.0e16) {
+            std::snprintf(buf, sizeof(buf), "%.0f", a);
+            body = buf;
+        } else {
+            /* The shortest digits that read back exactly, as Python's repr. */
+            for (int p = 1; p <= 17; ++p) {
+                std::snprintf(buf, sizeof(buf), "%.*g", p, a);
+                if (std::strtod(buf, nullptr) == a) {
+                    break;
+                }
+            }
+            body = buf;
+        }
+        break;
+    default: return false;
+    }
+
+    if (group != '\0') {
+        std::size_t end = body.find_first_of(".eE");
+        if (end == std::string::npos) {
+            end = body.size();
+        }
+        std::string grouped;
+        for (std::size_t k = 0; k < end; ++k) {
+            if (k != 0 && (end - k) % 3 == 0) {
+                grouped += group;
+            }
+            grouped += body[k];
+        }
+        body = grouped + body.substr(end);
+    }
+    body += suffix;
+
+    std::string sgn;
+    if (negative) {
+        sgn = "-";
+    } else if (sign == '+') {
+        sgn = "+";
+    } else if (sign == ' ') {
+        sgn = " ";
+    }
+    const std::size_t len = sgn.size() + body.size();
+    const std::size_t pad = width > len ? width - len : 0;
+    switch (align == '\0' ? '>' : align) {
+    case '<': out = sgn + body + std::string(pad, fill); break;
+    case '^': out = std::string(pad / 2, fill) + sgn + body + std::string(pad - pad / 2, fill); break;
+    case '=': out = sgn + std::string(pad, fill) + body; break;
+    default: out = std::string(pad, fill) + sgn + body; break;
+    }
+    return true;
+}
+
+/* Python's str.format over the two pie_label fields, {absval} and {frac}. */
+static bool py_format_pie(const char *fmt, double absval, double frac, std::string &out)
+{
+    out.clear();
+    for (const char *p = fmt; *p != '\0'; ++p) {
+        if (*p == '{' && p[1] == '{') {
+            out += '{';
+            ++p;
+            continue;
+        }
+        if (*p == '}') {
+            if (p[1] != '}') {
+                return false; /* a single '}' is an error in Python */
+            }
+            out += '}';
+            ++p;
+            continue;
+        }
+        if (*p != '{') {
+            out += *p;
+            continue;
+        }
+        const char *close = std::strchr(p, '}');
+        if (close == nullptr) {
+            return false;
+        }
+        const std::string field(p + 1, close);
+        const std::size_t colon = field.find(':');
+        const std::string name = field.substr(0, colon);
+        const std::string spec = colon == std::string::npos ? "" : field.substr(colon + 1);
+        double v;
+        if (name == "absval") {
+            v = absval;
+        } else if (name == "frac") {
+            v = frac;
+        } else {
+            return false;
+        }
+        std::string piece;
+        if (!py_format_number(v, spec, piece)) {
+            return false;
+        }
+        out += piece;
+        p = close;
+    }
+    return true;
+}
+
+VplResult VPL_CALL vplAxesPieLabelFormat(VplAxes *axes,
+                                         const char *format,
+                                         double distance,
+                                         double fontSize,
+                                         VplPieLabelAlign alignment,
+                                         int32_t rotate)
+{
+    VPL_TRY
+    if (axes == nullptr || format == nullptr) {
+        set_error("axes or format is null");
+        return VplResult_InvalidArgument;
+    }
+    vpl::PieLabelAlign align = vpl::PieLabelAlign::Auto;
+    switch (alignment) {
+    case VplPieLabelAlign_Auto: align = vpl::PieLabelAlign::Auto; break;
+    case VplPieLabelAlign_Center: align = vpl::PieLabelAlign::Center; break;
+    case VplPieLabelAlign_Outer: align = vpl::PieLabelAlign::Outer; break;
+    default: set_error("unknown alignment"); return VplResult_InvalidArgument;
+    }
+    vpl::Axes *ax = axes_of(axes);
+    std::vector<std::string> text(ax->pie_wedges.size());
+    for (size_t i = 0; i < text.size(); ++i) {
+        const auto &w = ax->pie_wedges[i];
+        if (!py_format_pie(format, w.value, w.frac, text[i])) {
+            set_error("format must use {absval} and {frac} with a supported format spec");
+            return VplResult_InvalidArgument;
+        }
+    }
+    ax->pie_label(text.data(), text.size(), distance, fontSize > 0.0 ? fontSize : 10.0, align,
+                  rotate != 0);
+    return VplResult_Success;
+    VPL_CATCH
+}
+
 VplResult VPL_CALL vplAxesPieLabelFull(VplAxes *axes,
                                        const char *const *labels,
                                        size_t count,
@@ -6973,6 +7203,35 @@ VplResult VPL_CALL vplAxesPieFull(VplAxes *axes, const double *x, size_t count,
         o.center_x = desc->centerX;
         o.center_y = desc->centerY;
         o.frame = desc->frame != 0;
+        if (desc->structSize >= offsetof(VplPieDesc, shadowShade) + sizeof(desc->shadowShade)) {
+            if (!(desc->wedgeWidth >= 0.0) || !std::isfinite(desc->wedgeWidth) ||
+                !(desc->wedgeLineWidth >= 0.0)) {
+                set_error("wedgeWidth and wedgeLineWidth must be non-negative");
+                return VplResult_InvalidArgument;
+            }
+            o.width = desc->wedgeWidth;
+            if (desc->wedgeEdgeColorSpec != nullptr) {
+                if (!vpl::parse_color(desc->wedgeEdgeColorSpec, o.edgecolor)) {
+                    set_error("unrecognized wedge edge colour spec");
+                    return VplResult_InvalidArgument;
+                }
+                o.has_edgecolor = true;
+            }
+            if (desc->wedgeLineWidth > 0.0) {
+                o.linewidth = desc->wedgeLineWidth;
+            }
+            o.shadow = desc->shadow != 0;
+            if (desc->hasShadowParams != 0) {
+                if (!(desc->shadowShade >= 0.0 && desc->shadowShade <= 1.0) ||
+                    !std::isfinite(desc->shadowOx) || !std::isfinite(desc->shadowOy)) {
+                    set_error("shadowShade must be in [0, 1] and the offsets finite");
+                    return VplResult_InvalidArgument;
+                }
+                o.shadow_ox = desc->shadowOx;
+                o.shadow_oy = desc->shadowOy;
+                o.shadow_shade = desc->shadowShade;
+            }
+        }
         labels = desc->labels;
         autopct = desc->autopct;
         rotate = desc->rotateLabels != 0;

@@ -49,6 +49,7 @@ typedef enum VplDemoId
     VplDemo_GroupedBar,
     VplDemo_Pie,
     VplDemo_PieFull,
+    VplDemo_PieDonut,
     VplDemo_Spectral,
     VplDemo_Specgram,
     VplDemo_Inset,
@@ -249,9 +250,15 @@ static const VplDemoInfo kVplDemos[VplDemo_Count] = {
      "vplAxesPie / vplAxesPieLabel"},
     {"Pie (full)", "pie_full",
      "Outer labels and autopct percentages, the largest wedge exploded, "
-     "starting at 12 o'clock and running clockwise -- then the same names "
-     "again, rotated along each wedge, through pie_label's own alignment.",
+     "starting at 12 o'clock and running clockwise, over a shadow -- then the "
+     "same names again, rotated along each wedge, through pie_label's own "
+     "alignment.",
      "vplAxesPieFull, vplAxesPieLabelFull"},
+    {"Donut", "pie_donut",
+     "wedgeprops=dict(width=0.4, edgecolor='w'): each wedge a ring segment "
+     "with a white gap between, labelled through one pie_label format string "
+     "-- \"{absval:d} ({frac:.0%})\".",
+     "vplAxesPieFull, vplAxesPieLabelFormat"},
     {"Power spectrum", "spectral",
      "Welch's method: cut the signal into segments, window each, transform, "
      "and average the periodograms -- which is what turns one noisy transform "
@@ -1121,9 +1128,25 @@ static VplResult vplBuildDemo(VplDemoId id, const VplDemoParams *p, VplFigure **
                 pie.autopct = "%1.0f%%";
                 pie.startAngle = 90.0;
                 pie.clockwise = 1;
+                pie.shadow = 1;
                 vplAxesPieFull(ax, pv, 5, &pie);
                 /* Wedge names along the rim, rotated with their wedges. */
                 vplAxesPieLabelFull(ax, pl, 5, 0.85, 7.0, VplPieLabelAlign_Center, 1);
+                break;
+            }
+
+            case VplDemo_PieDonut: {
+                static const double dv[4] = {42.0, 27.0, 19.0, 12.0};
+                VplPieDesc pie;
+                memset(&pie, 0, sizeof(pie));
+                pie.structSize = sizeof(pie);
+                pie.startAngle = 90.0;
+                pie.wedgeWidth = 0.4;
+                pie.wedgeEdgeColorSpec = "w";
+                pie.wedgeLineWidth = 2.0;
+                vplAxesPieFull(ax, dv, 4, &pie);
+                vplAxesPieLabelFormat(ax, "{absval:d} ({frac:.0%})", 0.8, 9.0,
+                                      VplPieLabelAlign_Center, 0);
                 break;
             }
 

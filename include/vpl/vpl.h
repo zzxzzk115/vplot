@@ -1431,6 +1431,21 @@ VPL_API VplResult VPL_CALL vplAxesPieLabelFull(VplAxes *axes,
                                                VplPieLabelAlign alignment,
                                                int32_t rotate);
 
+/* pie_label with a format string instead of a list -- the same template for
+   every wedge, in Python's str.format syntax with two fields: {absval}, the
+   wedge's value as given, and {frac}, its share of the pie. A field may take
+   a format spec: "{absval:d} ({frac:.0%})", "{frac:.1%}", "{absval:,.2f}".
+   Supported: fill and align (< > ^ =), sign (+ - space), 0, width, a ','
+   or '_' grouping, precision and the types d f F e E g G % (none prints an
+   integral value as an integer, otherwise the shortest round-trip form).
+   {{ and }} are literal braces. */
+VPL_API VplResult VPL_CALL vplAxesPieLabelFormat(VplAxes *axes,
+                                                 const char *format,
+                                                 double distance,
+                                                 double fontSize,
+                                                 VplPieLabelAlign alignment,
+                                                 int32_t rotate);
+
 /* One box's worth of summary: what vplAxesBoxPlot computes internally, and what
    vplAxesBxp takes instead of raw data. whisLo and whisHi are where the whiskers
    END (usually the furthest observation within 1.5 IQR of the nearer quartile,
@@ -2497,6 +2512,22 @@ typedef struct VplPieDesc
 
     /* Font size of the labels and percentages; 0 means 10. */
     double fontSize;
+
+    /* Added later, so read only when structSize covers them. */
+    /* wedgeprops: wedgeWidth > 0 makes each wedge a ring segment that many
+       radii wide (a donut); wedgeEdgeColorSpec strokes the wedges at
+       wedgeLineWidth points (0 means 1). */
+    double wedgeWidth;
+    const char *wedgeEdgeColorSpec;
+    double wedgeLineWidth;
+    /* shadow=True: a darkened copy of every wedge behind the pie. With
+       hasShadowParams, shadow={'ox': .., 'oy': .., 'shade': ..}; otherwise
+       matplotlib's ox = oy = -0.02 and shade 0.7. */
+    int32_t shadow;
+    int32_t hasShadowParams;
+    double shadowOx;
+    double shadowOy;
+    double shadowShade;
 } VplPieDesc;
 
 /* The general pie: explode, labels, autopct, startangle, radius, direction,

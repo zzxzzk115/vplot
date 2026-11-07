@@ -2159,6 +2159,19 @@ def case_hexbin_log_marginals():
     save(fig, "hexbin_log_marginals")
 
 
+def case_pie_shadow_donut():
+    """pie's shadow (an exploded pie with startangle) and wedgeprops (a donut
+    with white edges), labelled through a pie_label format string."""
+    sizes = [30, 20, 45, 5]
+    fig = plt.figure(figsize=(6.4, 4.8), dpi=100)
+    ax1 = fig.add_subplot(1, 2, 1)
+    ax1.pie(sizes, shadow=True, explode=[0, 0.1, 0, 0], startangle=90)
+    ax2 = fig.add_subplot(1, 2, 2)
+    pc = ax2.pie(sizes, wedgeprops=dict(width=0.4, edgecolor="w", linewidth=2))
+    ax2.pie_label(pc, "{absval:d} ({frac:.0%})", distance=0.8)
+    save(fig, "pie_shadow_donut")
+
+
 def _contour_field():
     """A 30 x 40 closed-form field spanning about -1.4 .. 1.6, off-centre."""
     import math
@@ -2899,6 +2912,7 @@ CASES = [
     case_contour_over_mesh,
     case_errorbar_limits,
     case_hexbin_log_marginals,
+    case_pie_shadow_donut,
 ]
 
 

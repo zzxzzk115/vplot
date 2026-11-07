@@ -45,8 +45,7 @@ The long tail — each command works at its defaults and is missing some keyword
 arguments. Notable ones:
 
 - `contourf`: hatching.
-- `pie`: `shadow`, `hatch`, `wedgeprops`, callable `autopct`; `pie_label`'s
-  `{absval}`/`{frac}` format strings.
+- `pie`: `hatch` (with the other hatched patches: no hatching yet).
 - `boxplot` / `bxp`: `bootstrap`, `usermedians`/`conf_intervals`, `capwidths`
   and the `*props` style dictionaries.
 - `quiver`: `scale_units` and other `units`/`angles`; `barbs`: per-barb

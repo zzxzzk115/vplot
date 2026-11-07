@@ -196,6 +196,22 @@ struct PieOptions
     /* frame=True keeps the axes and autoscales to the pie instead of hiding
        the frame and pinning the limits at +/-1.25 around the centre. */
     bool frame = false;
+
+    /* wedgeprops: width > 0 makes each wedge a ring segment of that radial
+       width (a donut); an edge colour strokes the wedges at `linewidth`;
+       alpha applies to the wedges. */
+    double width = 0.0;
+    bool has_edgecolor = false;
+    Color edgecolor;
+    double linewidth = 1.0; /* patch.linewidth */
+    double alpha = 1.0;
+
+    /* shadow=True (or a dict): a darkened copy of each wedge behind the pie,
+       at alpha 0.5, shifted by (ox, oy) data units scaled by dpi / 72. */
+    bool shadow = false;
+    double shadow_ox = -0.02;
+    double shadow_oy = -0.02;
+    double shadow_shade = 0.7;
 };
 
 /* pie_label's alignment: centred on the point, or pushed outwards from it
@@ -400,6 +416,10 @@ struct PolyPatch
      */
     bool line_tier = false;
 
+    /* A shift applied at draw time, in data units per point of dpi/72 --
+       a pie Shadow's (ox, oy), which matplotlib scales by points_to_pixels. */
+    double shift_pt_x = 0.0;
+    double shift_pt_y = 0.0;
     /* A coordinate in axes fraction (0..1 across the frame) rather than in
        data, per direction -- the blended get_xaxis_transform('grid') that
        hexbin's marginal bars use. Such a patch never counts towards limits. */
@@ -1399,6 +1419,7 @@ class Axes
         double cy = 0.0;
         double r = 1.0;
         double frac = 0.0; /* its share of the whole, for autopct */
+        double value = 0.0; /* the value as given, for pie_label's {absval} */
     };
     std::vector<PieWedge> pie_wedges;
 
