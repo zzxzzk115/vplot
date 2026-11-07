@@ -11,6 +11,8 @@
 #include <algorithm>
 #include <cctype>
 #include <cmath>
+#include <cstddef>
+#include <cstdio>
 #include <cstring>
 #include <memory>
 #include <new>
@@ -1527,17 +1529,50 @@ VplResult contour_impl(VplAxes *axes,
                        bool filled)
 {
     VPL_TRY
-    if (axes == nullptr || values == nullptr || levels == nullptr) {
-        set_error("axes, values or levels is null");
+    if (axes == nullptr || values == nullptr) {
+        set_error("axes or values is null");
         return VplResult_InvalidArgument;
     }
     if (rows < 2 || cols < 2) {
         set_error("contour needs a grid of at least 2x2");
         return VplResult_InvalidArgument;
     }
-    if (levelCount == 0) {
+    if (levels != nullptr && levelCount == 0) {
         set_error("levelCount is 0");
         return VplResult_InvalidArgument;
+    }
+    if (levels != nullptr) {
+        for (size_t i = 1; i < levelCount; ++i) {
+            if (!(levels[i] > levels[i - 1])) {
+                set_error("contour levels must be increasing");
+                return VplResult_InvalidArgument;
+            }
+        }
+    }
+
+    vpl::ContourExtend extend = vpl::ContourExtend::Neither;
+    if (desc != nullptr && desc->structSize >= offsetof(VplFieldDesc, extend) + sizeof(desc->extend) &&
+        (desc->set & VplFieldField_Extend) != 0) {
+        switch (desc->extend) {
+        case VplContourExtend_Neither: extend = vpl::ContourExtend::Neither; break;
+        case VplContourExtend_Min: extend = vpl::ContourExtend::Min; break;
+        case VplContourExtend_Max: extend = vpl::ContourExtend::Max; break;
+        case VplContourExtend_Both: extend = vpl::ContourExtend::Both; break;
+        default: set_error("unknown VplContourExtend"); return VplResult_InvalidArgument;
+        }
+    }
+
+    /* contour(Z, N): pick the levels from the data. */
+    std::vector<double> auto_levels;
+    if (levels == nullptr) {
+        auto_levels = vpl::Axes::auto_contour_levels(values, rows * cols, levelCount,
+                                                     filled ? extend : vpl::ContourExtend::Neither);
+        if (auto_levels.empty()) {
+            set_error("no finite values to choose contour levels from");
+            return VplResult_InvalidArgument;
+        }
+        levels = auto_levels.data();
+        levelCount = auto_levels.size();
     }
 
     /* The extent must be applied before extraction, since marching squares
@@ -1563,7 +1598,7 @@ VplResult contour_impl(VplAxes *axes,
     vpl::Axes *ax = axes_of(axes);
     vpl::ContourSet &cs =
         filled ? ax->contourf(values, rows, cols, levels, levelCount, ex[0], ex[1], ex[2],
-                              ex[3])
+                              ex[3], extend)
                : ax->contour(values, rows, cols, levels, levelCount, ex[0], ex[1], ex[2],
                              ex[3]);
 
@@ -1607,6 +1642,32 @@ VplResult contour_impl(VplAxes *axes,
 }
 
 } // namespace
+
+VplResult VPL_CALL vplContourGetLevels(const VplContour *contour,
+                                       double *buffer,
+                                       size_t bufferCount,
+                                       size_t *outCount)
+{
+    VPL_TRY
+    if (contour == nullptr) {
+        set_error("contour is null");
+        return VplResult_InvalidArgument;
+    }
+    const vpl::ContourSet &cs = *reinterpret_cast<const vpl::ContourSet *>(contour);
+    if (outCount != nullptr) {
+        *outCount = cs.levels.size();
+    }
+    if (buffer == nullptr) {
+        return VplResult_Success;
+    }
+    if (bufferCount < cs.levels.size()) {
+        set_error("buffer is too small for the levels");
+        return VplResult_BufferTooSmall;
+    }
+    std::copy(cs.levels.begin(), cs.levels.end(), buffer);
+    return VplResult_Success;
+    VPL_CATCH
+}
 
 VplResult VPL_CALL vplAxesContour(VplAxes *axes,
                                   const double *values,
@@ -1715,6 +1776,178 @@ VplResult VPL_CALL vplAxesErrorBar(VplAxes *axes,
             line.label = desc->label;
         }
     }
+
+    if (outLine != nullptr) {
+        *outLine = reinterpret_cast<VplLine *>(&line);
+    }
+    return VplResult_Success;
+    VPL_CATCH
+}
+
+namespace
+{
+
+/* No negative extents -- matplotlib raises on those. NaN is allowed and
+   skips that point's bar. */
+bool valid_extents(const double *e, size_t n)
+{
+    for (size_t i = 0; i < n; ++i) {
+        if (e[i] < 0.0) {
+            return false;
+        }
+    }
+    return true;
+}
+
+bool equals_ignore_case(const char *a, const char *b)
+{
+    for (; *a != '\0' && *b != '\0'; ++a, ++b) {
+        if (std::tolower(static_cast<unsigned char>(*a)) !=
+            std::tolower(static_cast<unsigned char>(*b))) {
+            return false;
+        }
+    }
+    return *a == *b;
+}
+
+} // namespace
+
+VplResult VPL_CALL vplAxesErrorBarFull(VplAxes *axes,
+                                       const double *x,
+                                       const double *y,
+                                       size_t count,
+                                       const double *yerrLower,
+                                       const double *yerrUpper,
+                                       const double *xerrLower,
+                                       const double *xerrUpper,
+                                       const VplErrorBarDesc *eb,
+                                       const VplLineDesc *desc,
+                                       VplLine **outLine)
+{
+    VPL_TRY
+    if (axes == nullptr || x == nullptr || y == nullptr) {
+        set_error("axes, x or y is null");
+        return VplResult_InvalidArgument;
+    }
+    if (count == 0) {
+        set_error("count is 0");
+        return VplResult_InvalidArgument;
+    }
+    if ((yerrLower == nullptr && yerrUpper != nullptr) ||
+        (xerrLower == nullptr && xerrUpper != nullptr)) {
+        set_error("an upper error array needs its lower one");
+        return VplResult_InvalidArgument;
+    }
+    for (const double *e : {yerrLower, yerrUpper, xerrLower, xerrUpper}) {
+        if (e != nullptr && !valid_extents(e, count)) {
+            set_error("error extents must not be negative");
+            return VplResult_InvalidArgument;
+        }
+    }
+
+    vpl::Color ecolor;
+    bool has_ecolor = false;
+    if (eb != nullptr) {
+        if (eb->structSize == 0) {
+            set_error("VplErrorBarDesc.structSize is 0");
+            return VplResult_InvalidArgument;
+        }
+        if (!(eb->capsize >= 0.0) || !(eb->capthick >= 0.0) || !(eb->elinewidth >= 0.0)) {
+            set_error("capsize, capthick and elinewidth must be non-negative");
+            return VplResult_InvalidArgument;
+        }
+        if (eb->structSize >= offsetof(VplErrorBarDesc, eLineStyle) + sizeof(eb->eLineStyle) &&
+            (eb->eLineStyle < VplLineStyle_Solid || eb->eLineStyle > VplLineStyle_None)) {
+            set_error("unknown eLineStyle");
+            return VplResult_InvalidArgument;
+        }
+        if (eb->eColorSpec != nullptr) {
+            if (!vpl::parse_color(eb->eColorSpec, ecolor)) {
+                set_error("unrecognized ecolor spec");
+                return VplResult_InvalidArgument;
+            }
+            has_ecolor = true;
+        } else if (eb->hasEColor != 0) {
+            ecolor = vpl::Color{eb->eColor[0], eb->eColor[1], eb->eColor[2], eb->eColor[3]};
+            has_ecolor = true;
+        }
+    }
+
+    /* fmt='none' is not a format the line parser knows: strip it and draw
+       only the bars. */
+    VplLineDesc line_desc{};
+    bool bars_only = false;
+    if (desc != nullptr) {
+        line_desc = *desc;
+        if ((desc->set & VplLineField_Format) != 0 && desc->format != nullptr &&
+            equals_ignore_case(desc->format, "none")) {
+            bars_only = true;
+            line_desc.set &= ~static_cast<uint32_t>(VplLineField_Format);
+        }
+    }
+
+    vpl::Line2D &line = axes_of(axes)->errorbar(x, y, yerrLower, count);
+    if (yerrUpper != nullptr) {
+        line.yerr_upper.assign(yerrUpper, yerrUpper + count);
+    }
+    if (xerrLower != nullptr) {
+        line.xerr.assign(xerrLower, xerrLower + count);
+    }
+    if (xerrUpper != nullptr) {
+        line.xerr_upper.assign(xerrUpper, xerrUpper + count);
+    }
+    if (eb != nullptr) {
+        line.capsize = eb->capsize;
+        line.capthick = eb->capthick > 0.0 ? eb->capthick : -1.0;
+        line.elinewidth = eb->elinewidth;
+        line.errorevery_offset = eb->errorEveryOffset;
+        line.errorevery_step = eb->errorEveryStep == 0 ? 1 : eb->errorEveryStep;
+        line.barsabove = eb->barsAbove != 0;
+        if (eb->structSize >= offsetof(VplErrorBarDesc, eLineStyle) + sizeof(eb->eLineStyle)) {
+            static const vpl::LineStyle styles[] = {vpl::LineStyle::Solid, vpl::LineStyle::Dashed,
+                                                    vpl::LineStyle::DashDot, vpl::LineStyle::Dotted,
+                                                    vpl::LineStyle::None};
+            line.elinestyle = styles[eb->eLineStyle];
+        }
+        if (eb->structSize >= offsetof(VplErrorBarDesc, xuplims) + sizeof(eb->xuplims)) {
+            const auto take = [count](const uint8_t *src, std::vector<std::uint8_t> &dst) {
+                if (src != nullptr) {
+                    dst.assign(src, src + count);
+                }
+            };
+            take(eb->lolims, line.lolims);
+            take(eb->uplims, line.uplims);
+            take(eb->xlolims, line.xlolims);
+            take(eb->xuplims, line.xuplims);
+        }
+    }
+
+    const VplResult r = apply_line_desc(line, desc != nullptr ? &line_desc : nullptr);
+    if (r != VplResult_Success) {
+        return r;
+    }
+    if (bars_only) {
+        /* matplotlib drops the data line and its cycle colour: the bars fall
+           back to C0 unless a colour was given. */
+        line.errorbars_only = true;
+        if ((line_desc.set & (VplLineField_Color | VplLineField_ColorSpec)) == 0) {
+            line.color = vpl::Color::rgb(0.121569, 0.466667, 0.705882);
+        }
+    }
+    if (desc != nullptr) {
+        if ((desc->set & VplLineField_Color) != 0) {
+            line.color = vpl::Color{desc->color[0], desc->color[1], desc->color[2],
+                                    desc->color[3]};
+        }
+        if ((desc->set & VplLineField_Width) != 0) {
+            line.linewidth = desc->width;
+        }
+        if ((desc->set & VplLineField_Label) != 0 && desc->label != nullptr) {
+            line.label = desc->label;
+        }
+    }
+    line.has_ecolor = has_ecolor;
+    line.ecolor = ecolor;
 
     if (outLine != nullptr) {
         *outLine = reinterpret_cast<VplLine *>(&line);
@@ -2029,6 +2262,123 @@ VplResult VPL_CALL vplAxesHist(VplAxes *axes,
 
     if (outPatch != nullptr) {
         *outPatch = reinterpret_cast<VplPatch *>(&patch);
+    }
+    return VplResult_Success;
+    VPL_CATCH
+}
+
+VplResult VPL_CALL vplAxesHistFull(VplAxes *axes,
+                                   const double *const *datasets,
+                                   const size_t *counts,
+                                   const double *const *weights,
+                                   size_t datasetCount,
+                                   const VplHistDesc *hist,
+                                   const VplPatchDesc *descs,
+                                   double *outTops,
+                                   double *outEdges,
+                                   VplPatch **outPatches)
+{
+    VPL_TRY
+    if (axes == nullptr || datasets == nullptr || counts == nullptr) {
+        set_error("axes, datasets or counts is null");
+        return VplResult_InvalidArgument;
+    }
+    if (datasetCount == 0) {
+        set_error("datasetCount is 0");
+        return VplResult_InvalidArgument;
+    }
+    for (size_t i = 0; i < datasetCount; ++i) {
+        if (counts[i] != 0 && datasets[i] == nullptr) {
+            set_error("a dataset with a non-zero count is null");
+            return VplResult_InvalidArgument;
+        }
+    }
+
+    vpl::HistOptions o;
+    if (hist != nullptr) {
+        if (hist->structSize == 0) {
+            set_error("VplHistDesc.structSize is 0");
+            return VplResult_InvalidArgument;
+        }
+        o.bins = hist->bins == 0 ? 10 : hist->bins;
+        if (hist->binEdges != nullptr) {
+            if (hist->binEdgeCount < 2) {
+                set_error("binEdges needs at least two edges");
+                return VplResult_InvalidArgument;
+            }
+            for (size_t k = 0; k < hist->binEdgeCount; ++k) {
+                if (!std::isfinite(hist->binEdges[k]) ||
+                    (k > 0 && !(hist->binEdges[k] > hist->binEdges[k - 1]))) {
+                    set_error("binEdges must be finite and strictly increasing");
+                    return VplResult_InvalidArgument;
+                }
+            }
+            o.edges = hist->binEdges;
+            o.edge_count = hist->binEdgeCount;
+        }
+        if (hist->hasRange != 0) {
+            if (!std::isfinite(hist->rangeMin) || !std::isfinite(hist->rangeMax) ||
+                hist->rangeMin > hist->rangeMax) {
+                set_error("range must be finite with rangeMin <= rangeMax");
+                return VplResult_InvalidArgument;
+            }
+            o.has_range = true;
+            o.range_lo = hist->rangeMin;
+            o.range_hi = hist->rangeMax;
+        }
+        o.density = hist->density != 0;
+        o.cumulative = hist->cumulative > 0 ? 1 : (hist->cumulative < 0 ? -1 : 0);
+        switch (hist->histtype) {
+        case VplHistType_Bar: o.type = vpl::HistType::Bar; break;
+        case VplHistType_BarStacked: o.type = vpl::HistType::BarStacked; break;
+        case VplHistType_Step: o.type = vpl::HistType::Step; break;
+        case VplHistType_StepFilled: o.type = vpl::HistType::StepFilled; break;
+        default: set_error("unknown histtype"); return VplResult_InvalidArgument;
+        }
+        switch (hist->align) {
+        case VplHistAlign_Mid: o.align = vpl::HistAlign::Mid; break;
+        case VplHistAlign_Left: o.align = vpl::HistAlign::Left; break;
+        case VplHistAlign_Right: o.align = vpl::HistAlign::Right; break;
+        default: set_error("unknown align"); return VplResult_InvalidArgument;
+        }
+        o.horizontal = hist->horizontal != 0;
+        if (!std::isfinite(hist->rwidth) || hist->rwidth < 0.0) {
+            set_error("rwidth must be finite and non-negative");
+            return VplResult_InvalidArgument;
+        }
+        if (hist->rwidth > 0.0) {
+            o.rwidth = hist->rwidth;
+        }
+        o.stacked = hist->stacked != 0;
+        if (!std::isfinite(hist->bottom)) {
+            set_error("bottom must be finite");
+            return VplResult_InvalidArgument;
+        }
+        o.bottom = hist->bottom;
+        o.log = hist->log != 0;
+    }
+
+    std::vector<double> tops;
+    std::vector<double> edges;
+    const std::vector<vpl::PolyPatch *> made =
+        axes_of(axes)->hist(datasets, counts, weights, datasetCount, o, &tops, &edges);
+
+    for (size_t i = 0; i < made.size(); ++i) {
+        if (descs != nullptr) {
+            const VplResult r = apply_patch_desc(*made[i], &descs[i]);
+            if (r != VplResult_Success) {
+                return r;
+            }
+        }
+        if (outPatches != nullptr) {
+            outPatches[i] = reinterpret_cast<VplPatch *>(made[i]);
+        }
+    }
+    if (outTops != nullptr) {
+        std::copy(tops.begin(), tops.end(), outTops);
+    }
+    if (outEdges != nullptr) {
+        std::copy(edges.begin(), edges.end(), outEdges);
     }
     return VplResult_Success;
     VPL_CATCH
@@ -2729,8 +3079,32 @@ VplResult VPL_CALL vplAxesQuiver(VplAxes *axes,
         set_error("count is 0");
         return VplResult_InvalidArgument;
     }
-    if (desc != nullptr && desc->structSize != sizeof(VplQuiverDesc)) {
+    /* The struct has grown: accept the original size, and read the later
+       fields only when the caller's structSize covers them. */
+    constexpr size_t kQuiverDescV1 = offsetof(VplQuiverDesc, label) + sizeof(const char *);
+    if (desc != nullptr && (desc->structSize < kQuiverDescV1 ||
+                            desc->structSize > sizeof(VplQuiverDesc))) {
         set_error("VplQuiverDesc.structSize does not match this header");
+        return VplResult_InvalidArgument;
+    }
+    const bool desc_v2 = desc != nullptr && desc->structSize >= sizeof(VplQuiverDesc);
+    if (desc_v2 && (desc->set & VplQuiverField_C) != 0) {
+        if (desc->C == nullptr) {
+            set_error("VplQuiverField_C needs C");
+            return VplResult_InvalidArgument;
+        }
+        if (desc->hasVLimits != 0 && !(desc->vmax > desc->vmin)) {
+            set_error("vmin must be below vmax");
+            return VplResult_InvalidArgument;
+        }
+    }
+    if (desc_v2 && (desc->set & VplQuiverField_Colors) != 0 && desc->colors == nullptr) {
+        set_error("VplQuiverField_Colors needs colors");
+        return VplResult_InvalidArgument;
+    }
+    vpl::Colormap quiver_cmap = vpl::Colormap::Viridis;
+    if (desc_v2 && (desc->set & VplQuiverField_C) != 0 && !to_colormap(desc->cmap, quiver_cmap)) {
+        set_error("unknown VplColormap");
         return VplResult_InvalidArgument;
     }
 
@@ -2767,6 +3141,19 @@ VplResult VPL_CALL vplAxesQuiver(VplAxes *axes,
     }
     if ((desc->set & VplQuiverField_Label) != 0 && desc->label != nullptr) {
         q.label = desc->label;
+    }
+    if (desc_v2 && (desc->set & VplQuiverField_C) != 0) {
+        q.c.assign(desc->C, desc->C + count);
+        q.cmap = quiver_cmap;
+        q.has_vlimits = desc->hasVLimits != 0;
+        q.vmin = desc->vmin;
+        q.vmax = desc->vmax;
+    }
+    if (desc_v2 && (desc->set & VplQuiverField_Colors) != 0) {
+        for (size_t i = 0; i < count; ++i) {
+            const float *c = desc->colors + 4 * i;
+            q.colors.push_back(vpl::Color{c[0], c[1], c[2], c[3]});
+        }
     }
     return VplResult_Success;
     VPL_CATCH
@@ -2928,6 +3315,76 @@ VplResult VPL_CALL vplAxesXCorr(VplAxes *axes,
     axes_of(axes)->xcorr(x, y, count, maxLags, normed != 0);
     return VplResult_Success;
     VPL_CATCH
+}
+
+VplResult VPL_CALL vplAxesXCorrFull(VplAxes *axes,
+                                    const double *x,
+                                    const double *y,
+                                    size_t count,
+                                    int maxLags,
+                                    int normed,
+                                    VplSpectralDetrend detrend,
+                                    int32_t useVlines,
+                                    const VplLineDesc *desc,
+                                    VplLine **outLine)
+{
+    VPL_TRY
+    if (outLine != nullptr) {
+        *outLine = nullptr;
+    }
+    if (axes == nullptr || x == nullptr || y == nullptr) {
+        set_error("axes, x or y is null");
+        return VplResult_InvalidArgument;
+    }
+    if (count < 2) {
+        set_error("count must be at least 2");
+        return VplResult_InvalidArgument;
+    }
+    if (maxLags == 0) {
+        maxLags = static_cast<int>(count - 1);
+    }
+    if (maxLags < 1 || static_cast<size_t>(maxLags) >= count) {
+        set_error("maxLags must be at least 1 and less than count");
+        return VplResult_InvalidArgument;
+    }
+    vpl::SpectralDetrend how = vpl::SpectralDetrend::None;
+    switch (detrend) {
+    case VplSpectralDetrend_None: how = vpl::SpectralDetrend::None; break;
+    case VplSpectralDetrend_Mean: how = vpl::SpectralDetrend::Mean; break;
+    case VplSpectralDetrend_Linear: how = vpl::SpectralDetrend::Linear; break;
+    default: set_error("unknown VplSpectralDetrend"); return VplResult_InvalidArgument;
+    }
+    if (useVlines != 0 && desc != nullptr) {
+        set_error("desc styles the marker form only; pass NULL with useVlines");
+        return VplResult_InvalidArgument;
+    }
+    vpl::Line2D *line =
+        axes_of(axes)->xcorr(x, y, count, maxLags, normed != 0, how, useVlines != 0);
+    if (line != nullptr) {
+        const VplResult r = apply_line_desc(*line, desc);
+        if (r != VplResult_Success) {
+            return r;
+        }
+        if (outLine != nullptr) {
+            *outLine = reinterpret_cast<VplLine *>(line);
+        }
+    }
+    return VplResult_Success;
+    VPL_CATCH
+}
+
+VplResult VPL_CALL vplAxesACorrFull(VplAxes *axes,
+                                    const double *x,
+                                    size_t count,
+                                    int maxLags,
+                                    int normed,
+                                    VplSpectralDetrend detrend,
+                                    int32_t useVlines,
+                                    const VplLineDesc *desc,
+                                    VplLine **outLine)
+{
+    return vplAxesXCorrFull(axes, x, x, count, maxLags, normed, detrend, useVlines, desc,
+                            outLine);
 }
 
 VplResult VPL_CALL vplAxesACorr(VplAxes *axes,
@@ -3184,6 +3641,40 @@ VplResult VPL_CALL vplAxesPieLabel(VplAxes *axes,
     }
     axes_of(axes)->pie_label(text.data(), count, distance,
                              fontSize > 0.0 ? fontSize : 10.0);
+    return VplResult_Success;
+    VPL_CATCH
+}
+
+VplResult VPL_CALL vplAxesPieLabelFull(VplAxes *axes,
+                                       const char *const *labels,
+                                       size_t count,
+                                       double distance,
+                                       double fontSize,
+                                       VplPieLabelAlign alignment,
+                                       int32_t rotate)
+{
+    VPL_TRY
+    if (axes == nullptr || labels == nullptr) {
+        set_error("axes or labels is null");
+        return VplResult_InvalidArgument;
+    }
+    if (count == 0) {
+        set_error("count is 0");
+        return VplResult_InvalidArgument;
+    }
+    vpl::PieLabelAlign align = vpl::PieLabelAlign::Auto;
+    switch (alignment) {
+    case VplPieLabelAlign_Auto: align = vpl::PieLabelAlign::Auto; break;
+    case VplPieLabelAlign_Center: align = vpl::PieLabelAlign::Center; break;
+    case VplPieLabelAlign_Outer: align = vpl::PieLabelAlign::Outer; break;
+    default: set_error("unknown alignment"); return VplResult_InvalidArgument;
+    }
+    std::vector<std::string> text(count);
+    for (size_t i = 0; i < count; ++i) {
+        text[i] = labels[i] != nullptr ? labels[i] : "";
+    }
+    axes_of(axes)->pie_label(text.data(), count, distance, fontSize > 0.0 ? fontSize : 10.0,
+                             align, rotate != 0);
     return VplResult_Success;
     VPL_CATCH
 }
@@ -3850,6 +4341,167 @@ VplResult VPL_CALL vplAxesBxp(VplAxes *axes, const VplBoxStats *stats, size_t gr
     VPL_CATCH
 }
 
+namespace
+{
+
+/* VplBoxDesc to vpl::BoxOptions; `labels` owns the strings options points at. */
+VplResult box_options_from(const VplBoxDesc *desc, size_t groupCount, vpl::BoxOptions &o,
+                           std::vector<std::string> &labels)
+{
+    if (desc == nullptr) {
+        return VplResult_Success;
+    }
+    if (desc->structSize == 0) {
+        set_error("VplBoxDesc.structSize is 0");
+        return VplResult_InvalidArgument;
+    }
+    if (desc->widths != nullptr) {
+        for (size_t g = 0; g < groupCount; ++g) {
+            if (!(desc->widths[g] > 0.0) || !std::isfinite(desc->widths[g])) {
+                set_error("widths must be positive");
+                return VplResult_InvalidArgument;
+            }
+        }
+    }
+    if (desc->positions != nullptr) {
+        for (size_t g = 0; g < groupCount; ++g) {
+            if (!std::isfinite(desc->positions[g])) {
+                set_error("positions must be finite");
+                return VplResult_InvalidArgument;
+            }
+        }
+    }
+    if (desc->labels != nullptr) {
+        for (size_t g = 0; g < groupCount; ++g) {
+            labels.emplace_back(desc->labels[g] != nullptr ? desc->labels[g] : "");
+        }
+        o.labels = labels.data();
+    }
+    o.positions = desc->positions;
+    o.widths = desc->widths;
+    o.horizontal = desc->horizontal != 0;
+    o.patch_artist = desc->patchArtist != 0;
+    o.shownotches = desc->showNotches != 0;
+    o.showmeans = desc->showMeans != 0;
+    o.meanline = desc->meanLine != 0;
+    o.showcaps = desc->hideCaps == 0;
+    o.showbox = desc->hideBox == 0;
+    o.showfliers = desc->hideFliers == 0;
+    o.manage_ticks = desc->noManageTicks == 0;
+    return VplResult_Success;
+}
+
+} // namespace
+
+VplResult VPL_CALL vplAxesBoxPlotFull(VplAxes *axes,
+                                      const double *values,
+                                      const size_t *counts,
+                                      size_t groupCount,
+                                      const VplBoxDesc *desc)
+{
+    VPL_TRY
+    if (axes == nullptr || values == nullptr || counts == nullptr) {
+        set_error("axes, values or counts is null");
+        return VplResult_InvalidArgument;
+    }
+    if (groupCount == 0) {
+        set_error("groupCount is 0");
+        return VplResult_InvalidArgument;
+    }
+    vpl::BoxOptions o;
+    std::vector<std::string> labels;
+    const VplResult r = box_options_from(desc, groupCount, o, labels);
+    if (r != VplResult_Success) {
+        return r;
+    }
+    double whis = 1.5;
+    const double *pct = nullptr;
+    if (desc != nullptr) {
+        if (desc->whis < 0.0 || !std::isfinite(desc->whis)) {
+            set_error("whis must be non-negative");
+            return VplResult_InvalidArgument;
+        }
+        if (desc->whis > 0.0) {
+            whis = desc->whis;
+        }
+        if (desc->hasWhisPercentiles != 0) {
+            const double lo = desc->whisPercentiles[0];
+            const double hi = desc->whisPercentiles[1];
+            if (!(lo >= 0.0 && lo <= hi && hi <= 100.0)) {
+                set_error("whisPercentiles must satisfy 0 <= lo <= hi <= 100");
+                return VplResult_InvalidArgument;
+            }
+            pct = desc->whisPercentiles;
+        }
+    }
+    axes_of(axes)->boxplot(values, counts, groupCount, o, whis, pct);
+    return VplResult_Success;
+    VPL_CATCH
+}
+
+VplResult VPL_CALL vplAxesBxpFull(VplAxes *axes,
+                                  const VplBoxStats *stats,
+                                  size_t groupCount,
+                                  const double *means,
+                                  const double *ciLo,
+                                  const double *ciHi,
+                                  const VplBoxDesc *desc)
+{
+    VPL_TRY
+    if (axes == nullptr || stats == nullptr) {
+        set_error("axes or stats is null");
+        return VplResult_InvalidArgument;
+    }
+    if (groupCount == 0) {
+        set_error("groupCount is 0");
+        return VplResult_InvalidArgument;
+    }
+    vpl::BoxOptions o;
+    std::vector<std::string> labels;
+    const VplResult r = box_options_from(desc, groupCount, o, labels);
+    if (r != VplResult_Success) {
+        return r;
+    }
+    if (o.showmeans && means == nullptr) {
+        set_error("showMeans needs the means");
+        return VplResult_InvalidArgument;
+    }
+    if (o.shownotches && (ciLo == nullptr || ciHi == nullptr)) {
+        set_error("showNotches needs ciLo and ciHi");
+        return VplResult_InvalidArgument;
+    }
+
+    std::vector<vpl::BoxStats> converted(groupCount);
+    for (size_t g = 0; g < groupCount; ++g) {
+        const VplBoxStats &in = stats[g];
+        if (in.structSize != sizeof(VplBoxStats)) {
+            set_error("VplBoxStats.structSize does not match this header");
+            return VplResult_InvalidArgument;
+        }
+        if (in.flierCount != 0 && in.fliers == nullptr) {
+            set_error("flierCount is nonzero but fliers is null");
+            return VplResult_InvalidArgument;
+        }
+        vpl::BoxStats &out = converted[g];
+        out.q1 = in.q1;
+        out.med = in.median;
+        out.q3 = in.q3;
+        out.whislo = in.whisLo;
+        out.whishi = in.whisHi;
+        out.fliers.assign(in.fliers, in.fliers + in.flierCount);
+        if (means != nullptr) {
+            out.mean = means[g];
+        }
+        if (ciLo != nullptr && ciHi != nullptr) {
+            out.cilo = ciLo[g];
+            out.cihi = ciHi[g];
+        }
+    }
+    axes_of(axes)->bxp(converted.data(), groupCount, o);
+    return VplResult_Success;
+    VPL_CATCH
+}
+
 VplResult VPL_CALL vplAxesEcdf(VplAxes *axes,
                                const double *x,
                                size_t count,
@@ -4073,6 +4725,82 @@ VplResult VPL_CALL vplAxesHexbin(VplAxes *axes,
     VPL_CATCH
 }
 
+VplResult VPL_CALL vplAxesHexbinFull(VplAxes *axes,
+                                     const double *x,
+                                     const double *y,
+                                     size_t count,
+                                     const VplHexbinDesc *desc)
+{
+    VPL_TRY
+    if (axes == nullptr || x == nullptr || y == nullptr) {
+        set_error("axes, x or y is null");
+        return VplResult_InvalidArgument;
+    }
+    if (count == 0) {
+        set_error("count is 0");
+        return VplResult_InvalidArgument;
+    }
+    vpl::HexbinOptions o;
+    if (desc != nullptr) {
+        if (desc->structSize == 0) {
+            set_error("VplHexbinDesc.structSize is 0");
+            return VplResult_InvalidArgument;
+        }
+        o.nx = desc->gridsizeX == 0 ? 100 : desc->gridsizeX;
+        o.ny = desc->gridsizeY;
+        o.C = desc->C;
+        switch (desc->reduce) {
+        case VplHexReduce_Mean: o.reduce = vpl::HexReduce::Mean; break;
+        case VplHexReduce_Sum: o.reduce = vpl::HexReduce::Sum; break;
+        case VplHexReduce_Max: o.reduce = vpl::HexReduce::Max; break;
+        case VplHexReduce_Min: o.reduce = vpl::HexReduce::Min; break;
+        case VplHexReduce_Median: o.reduce = vpl::HexReduce::Median; break;
+        case VplHexReduce_Std: o.reduce = vpl::HexReduce::Std; break;
+        default: set_error("unknown VplHexReduce"); return VplResult_InvalidArgument;
+        }
+        o.mincnt = desc->mincnt;
+        if (desc->hasExtent != 0) {
+            const double *e = desc->extent;
+            if (!std::isfinite(e[0]) || !std::isfinite(e[1]) || !std::isfinite(e[2]) ||
+                !std::isfinite(e[3]) || !(e[1] > e[0]) || !(e[3] > e[2])) {
+                set_error("extent must be finite with xmin < xmax and ymin < ymax");
+                return VplResult_InvalidArgument;
+            }
+            o.has_extent = true;
+            std::copy(e, e + 4, o.extent);
+        }
+        if (!to_colormap(desc->cmap, o.cmap)) {
+            set_error("unknown VplColormap");
+            return VplResult_InvalidArgument;
+        }
+        if (desc->hasVLimits != 0) {
+            if (!(desc->vmax > desc->vmin) || (desc->logBins != 0 && !(desc->vmin > 0.0))) {
+                set_error("vmin must be below vmax (and positive under logBins)");
+                return VplResult_InvalidArgument;
+            }
+            o.has_vlimits = true;
+            o.vmin = desc->vmin;
+            o.vmax = desc->vmax;
+        }
+        o.log_bins = desc->logBins != 0;
+        o.bins = desc->bins;
+        if (desc->structSize >= offsetof(VplHexbinDesc, marginals) + sizeof(desc->marginals)) {
+            o.xlog = desc->xLog != 0;
+            o.ylog = desc->yLog != 0;
+            o.marginals = desc->marginals != 0;
+        }
+    }
+    for (size_t i = 0; i < count; ++i) {
+        if ((o.xlog && !(x[i] > 0.0)) || (o.ylog && !(y[i] > 0.0))) {
+            set_error("a log-scaled hexbin axis needs positive data");
+            return VplResult_InvalidArgument;
+        }
+    }
+    axes_of(axes)->hexbin(x, y, count, o);
+    return VplResult_Success;
+    VPL_CATCH
+}
+
 VplResult VPL_CALL vplAxesTriplot(VplAxes *axes,
                                   const double *x,
                                   const double *y,
@@ -4092,13 +4820,143 @@ VplResult VPL_CALL vplAxesTriplot(VplAxes *axes,
     VPL_CATCH
 }
 
+/* A VplTriangulation resolved to the triangles that are drawn: the given
+   ones less the masked, or the Delaunay triangulation. `source` maps each kept
+   triangle to its index in the caller's list, for per-triangle values;
+   `total` is the length of that list. */
+static VplResult resolve_triangulation(const double *x,
+                                       const double *y,
+                                       size_t count,
+                                       const VplTriangulation *tri,
+                                       std::vector<vpl::Triangle> &tris,
+                                       std::vector<size_t> &source,
+                                       size_t &total)
+{
+    tris.clear();
+    source.clear();
+    if (tri != nullptr && tri->structSize == 0) {
+        set_error("VplTriangulation.structSize is 0");
+        return VplResult_InvalidArgument;
+    }
+    if (tri == nullptr || tri->triangles == nullptr) {
+        if (tri != nullptr && tri->mask != nullptr) {
+            set_error("a triangulation mask needs explicit triangles");
+            return VplResult_InvalidArgument;
+        }
+        tris = vpl::delaunay(x, y, count);
+        total = tris.size();
+        for (size_t i = 0; i < tris.size(); ++i) {
+            source.push_back(i);
+        }
+        return VplResult_Success;
+    }
+    if (tri->triangleCount == 0) {
+        set_error("triangleCount is 0");
+        return VplResult_InvalidArgument;
+    }
+    total = tri->triangleCount;
+    for (size_t i = 0; i < tri->triangleCount; ++i) {
+        const int32_t *t = tri->triangles + 3 * i;
+        for (int k = 0; k < 3; ++k) {
+            if (t[k] < 0 || static_cast<size_t>(t[k]) >= count) {
+                set_error("a triangle index is out of range");
+                return VplResult_InvalidArgument;
+            }
+        }
+        if (tri->mask != nullptr && tri->mask[i] != 0) {
+            continue;
+        }
+        tris.push_back(vpl::Triangle{t[0], t[1], t[2]});
+        source.push_back(i);
+    }
+    return VplResult_Success;
+}
+
+VplResult VPL_CALL vplTriangulate(const double *x,
+                                  const double *y,
+                                  size_t count,
+                                  int32_t *triangles,
+                                  size_t triangleCapacity,
+                                  size_t *outTriangleCount)
+{
+    VPL_TRY
+    if (x == nullptr || y == nullptr) {
+        set_error("x or y is null");
+        return VplResult_InvalidArgument;
+    }
+    const std::vector<vpl::Triangle> tris = vpl::delaunay(x, y, count);
+    if (outTriangleCount != nullptr) {
+        *outTriangleCount = tris.size();
+    }
+    if (triangles == nullptr) {
+        return VplResult_Success;
+    }
+    if (triangleCapacity < tris.size()) {
+        set_error("buffer is too small for the triangles");
+        return VplResult_BufferTooSmall;
+    }
+    for (size_t i = 0; i < tris.size(); ++i) {
+        triangles[3 * i] = tris[i].a;
+        triangles[3 * i + 1] = tris[i].b;
+        triangles[3 * i + 2] = tris[i].c;
+    }
+    return VplResult_Success;
+    VPL_CATCH
+}
+
+VplResult VPL_CALL vplAxesTriplotFull(VplAxes *axes,
+                                      const double *x,
+                                      const double *y,
+                                      size_t count,
+                                      const VplTriangulation *tri,
+                                      const char *fmt)
+{
+    VPL_TRY
+    if (axes == nullptr || x == nullptr || y == nullptr) {
+        set_error("axes, x or y is null");
+        return VplResult_InvalidArgument;
+    }
+    if (count < 3) {
+        set_error("a triangulation needs at least 3 points");
+        return VplResult_InvalidArgument;
+    }
+    vpl::TriplotStyle style;
+    if (fmt != nullptr && fmt[0] != '\0') {
+        vpl::Color c;
+        bool hc = false, hls = false, hmk = false;
+        vpl::LineStyle ls = vpl::LineStyle::Solid;
+        vpl::MarkerStyle mk = vpl::MarkerStyle::None;
+        if (!vpl::parse_format(fmt, c, hc, ls, hls, mk, hmk)) {
+            set_error("could not parse fmt");
+            return VplResult_InvalidArgument;
+        }
+        style.has_color = hc;
+        style.color = c;
+        style.marker = hmk ? mk : vpl::MarkerStyle::None;
+        /* A marker with no line style means markers only, as in plot. */
+        style.linestyle = hls ? ls : (hmk ? vpl::LineStyle::None : vpl::LineStyle::Solid);
+    }
+    std::vector<vpl::Triangle> tris;
+    std::vector<size_t> source;
+    size_t total = 0;
+    const VplResult r = resolve_triangulation(x, y, count, tri, tris, source, total);
+    if (r != VplResult_Success) {
+        return r;
+    }
+    axes_of(axes)->triplot(x, y, count, tris, style);
+    return VplResult_Success;
+    VPL_CATCH
+}
+
 /* tricontour and tricontourf differ only in which core call they make: the
-   validation, the desc handling and the handle-out are identical. */
+   validation, the desc handling and the handle-out are identical. The legacy
+   entries pass tri = NULL and always give levels. */
 static VplResult tricontour_impl(VplAxes *axes,
                                  const double *x,
                                  const double *y,
                                  const double *z,
                                  size_t count,
+                                 const VplTriangulation *tri,
                                  const double *levels,
                                  size_t levelCount,
                                  const VplFieldDesc *desc,
@@ -4106,18 +4964,53 @@ static VplResult tricontour_impl(VplAxes *axes,
                                  bool filled)
 {
     VPL_TRY
-    if (axes == nullptr || x == nullptr || y == nullptr || z == nullptr ||
-        levels == nullptr) {
-        set_error("axes, x, y, z or levels is null");
+    if (axes == nullptr || x == nullptr || y == nullptr || z == nullptr) {
+        set_error("axes, x, y or z is null");
         return VplResult_InvalidArgument;
     }
     if (count < 3) {
         set_error("a triangulation needs at least 3 points");
         return VplResult_InvalidArgument;
     }
-    if (levelCount == 0) {
+    if (levels != nullptr && levelCount == 0) {
         set_error("levelCount is 0");
         return VplResult_InvalidArgument;
+    }
+    if (levels != nullptr) {
+        for (size_t i = 1; i < levelCount; ++i) {
+            if (!(levels[i] > levels[i - 1])) {
+                set_error("contour levels must be increasing");
+                return VplResult_InvalidArgument;
+            }
+        }
+    }
+    if (desc != nullptr && desc->structSize == 0) {
+        set_error("VplFieldDesc.structSize is 0");
+        return VplResult_InvalidArgument;
+    }
+
+    vpl::ContourExtend extend = vpl::ContourExtend::Neither;
+    if (filled && desc != nullptr &&
+        desc->structSize >= offsetof(VplFieldDesc, extend) + sizeof(desc->extend) &&
+        (desc->set & VplFieldField_Extend) != 0) {
+        switch (desc->extend) {
+        case VplContourExtend_Neither: extend = vpl::ContourExtend::Neither; break;
+        case VplContourExtend_Min: extend = vpl::ContourExtend::Min; break;
+        case VplContourExtend_Max: extend = vpl::ContourExtend::Max; break;
+        case VplContourExtend_Both: extend = vpl::ContourExtend::Both; break;
+        default: set_error("unknown VplContourExtend"); return VplResult_InvalidArgument;
+        }
+    }
+
+    std::vector<double> auto_levels;
+    if (levels == nullptr) {
+        auto_levels = vpl::Axes::auto_contour_levels(z, count, levelCount, extend);
+        if (auto_levels.empty()) {
+            set_error("no finite values to choose contour levels from");
+            return VplResult_InvalidArgument;
+        }
+        levels = auto_levels.data();
+        levelCount = auto_levels.size();
     }
 
     if (filled && levelCount < 2) {
@@ -4125,16 +5018,20 @@ static VplResult tricontour_impl(VplAxes *axes,
         return VplResult_InvalidArgument;
     }
 
+    std::vector<vpl::Triangle> tris;
+    std::vector<size_t> source;
+    size_t total = 0;
+    const VplResult r = resolve_triangulation(x, y, count, tri, tris, source, total);
+    if (r != VplResult_Success) {
+        return r;
+    }
+
     vpl::Axes *ax = axes_of(axes);
     vpl::ContourSet &cs =
-        filled ? ax->tricontourf(x, y, z, count, levels, levelCount)
-               : ax->tricontour(x, y, z, count, levels, levelCount);
+        filled ? ax->tricontourf(x, y, z, count, tris, levels, levelCount, extend)
+               : ax->tricontour(x, y, z, count, tris, levels, levelCount);
 
     if (desc != nullptr) {
-        if (desc->structSize == 0) {
-            set_error("VplFieldDesc.structSize is 0");
-            return VplResult_InvalidArgument;
-        }
         if ((desc->set & VplFieldField_Colormap) != 0 &&
             !to_colormap(desc->cmap, cs.cmap)) {
             set_error("unknown VplColormap");
@@ -4178,8 +5075,42 @@ VplResult VPL_CALL vplAxesTriContour(VplAxes *axes,
                                      const VplFieldDesc *desc,
                                      VplContour **outContour)
 {
-    return tricontour_impl(axes, x, y, z, count, levels, levelCount, desc, outContour,
+    if (levels == nullptr) {
+        set_error("levels is null");
+        return VplResult_InvalidArgument;
+    }
+    return tricontour_impl(axes, x, y, z, count, nullptr, levels, levelCount, desc,
+                           outContour, /*filled=*/false);
+}
+
+VplResult VPL_CALL vplAxesTriContourFull(VplAxes *axes,
+                                         const double *x,
+                                         const double *y,
+                                         const double *z,
+                                         size_t count,
+                                         const VplTriangulation *tri,
+                                         const double *levels,
+                                         size_t levelCount,
+                                         const VplFieldDesc *desc,
+                                         VplContour **outContour)
+{
+    return tricontour_impl(axes, x, y, z, count, tri, levels, levelCount, desc, outContour,
                            /*filled=*/false);
+}
+
+VplResult VPL_CALL vplAxesTriContourFFull(VplAxes *axes,
+                                          const double *x,
+                                          const double *y,
+                                          const double *z,
+                                          size_t count,
+                                          const VplTriangulation *tri,
+                                          const double *levels,
+                                          size_t levelCount,
+                                          const VplFieldDesc *desc,
+                                          VplContour **outContour)
+{
+    return tricontour_impl(axes, x, y, z, count, tri, levels, levelCount, desc, outContour,
+                           /*filled=*/true);
 }
 
 VplResult VPL_CALL vplAxesTriContourF(VplAxes *axes,
@@ -4192,8 +5123,12 @@ VplResult VPL_CALL vplAxesTriContourF(VplAxes *axes,
                                       const VplFieldDesc *desc,
                                       VplContour **outContour)
 {
-    return tricontour_impl(axes, x, y, z, count, levels, levelCount, desc, outContour,
-                           /*filled=*/true);
+    if (levels == nullptr) {
+        set_error("levels is null");
+        return VplResult_InvalidArgument;
+    }
+    return tricontour_impl(axes, x, y, z, count, nullptr, levels, levelCount, desc,
+                           outContour, /*filled=*/true);
 }
 
 VplResult VPL_CALL vplAxesTriPcolor(VplAxes *axes,
@@ -4216,6 +5151,79 @@ VplResult VPL_CALL vplAxesTriPcolor(VplAxes *axes,
     VPL_CATCH
 }
 
+VplResult VPL_CALL vplAxesTriPcolorFull(VplAxes *axes,
+                                        const double *x,
+                                        const double *y,
+                                        size_t count,
+                                        const VplTriangulation *tri,
+                                        const double *c,
+                                        size_t cCount,
+                                        int32_t cAtTriangles,
+                                        const VplFieldDesc *desc)
+{
+    VPL_TRY
+    if (axes == nullptr || x == nullptr || y == nullptr || c == nullptr) {
+        set_error("axes, x, y or c is null");
+        return VplResult_InvalidArgument;
+    }
+    if (count < 3) {
+        set_error("a triangulation needs at least 3 points");
+        return VplResult_InvalidArgument;
+    }
+    std::vector<vpl::Triangle> tris;
+    std::vector<size_t> source;
+    size_t total = 0;
+    const VplResult r = resolve_triangulation(x, y, count, tri, tris, source, total);
+    if (r != VplResult_Success) {
+        return r;
+    }
+    /* Points first on a tie, unless facecolors= is asked for. */
+    const bool at_points = cAtTriangles == 0 && cCount == count;
+    const bool at_faces = !at_points && cCount == total;
+    if (!at_points && !at_faces) {
+        set_error("cCount must match the number of points or of triangles");
+        return VplResult_InvalidArgument;
+    }
+
+    vpl::TripcolorOptions o;
+    if (desc != nullptr) {
+        if (desc->structSize == 0) {
+            set_error("VplFieldDesc.structSize is 0");
+            return VplResult_InvalidArgument;
+        }
+        if ((desc->set & VplFieldField_Colormap) != 0 && !to_colormap(desc->cmap, o.cmap)) {
+            set_error("unknown VplColormap");
+            return VplResult_InvalidArgument;
+        }
+        if ((desc->set & VplFieldField_VLimits) != 0) {
+            if (!(desc->vmax > desc->vmin)) {
+                set_error("vmin must be below vmax");
+                return VplResult_InvalidArgument;
+            }
+            o.has_vlimits = true;
+            o.vmin = desc->vmin;
+            o.vmax = desc->vmax;
+        }
+        if ((desc->set & VplFieldField_Alpha) != 0) {
+            if (!(desc->alpha >= 0.0 && desc->alpha <= 1.0)) {
+                set_error("alpha must be in [0, 1]");
+                return VplResult_InvalidArgument;
+            }
+            o.alpha = desc->alpha;
+        }
+    }
+
+    std::vector<double> facevals;
+    facevals.reserve(tris.size());
+    for (size_t i = 0; i < tris.size(); ++i) {
+        const vpl::Triangle &t = tris[i];
+        facevals.push_back(at_points ? (c[t.a] + c[t.b] + c[t.c]) / 3.0 : c[source[i]]);
+    }
+    axes_of(axes)->tripcolor(x, y, count, tris, facevals, o);
+    return VplResult_Success;
+    VPL_CATCH
+}
+
 VplResult VPL_CALL vplAxesPie(VplAxes *axes, const double *x, size_t count)
 {
     VPL_TRY
@@ -4228,6 +5236,97 @@ VplResult VPL_CALL vplAxesPie(VplAxes *axes, const double *x, size_t count)
         return VplResult_InvalidArgument;
     }
     axes_of(axes)->pie(x, count);
+    return VplResult_Success;
+    VPL_CATCH
+}
+
+VplResult VPL_CALL vplAxesViolinPlotFull(VplAxes *axes,
+                                         const double *values,
+                                         const size_t *counts,
+                                         size_t groupCount,
+                                         const VplViolinDesc *desc)
+{
+    VPL_TRY
+    if (axes == nullptr || values == nullptr || counts == nullptr) {
+        set_error("axes, values or counts is null");
+        return VplResult_InvalidArgument;
+    }
+    if (groupCount == 0) {
+        set_error("groupCount is 0");
+        return VplResult_InvalidArgument;
+    }
+    vpl::ViolinOptions o;
+    if (desc != nullptr) {
+        if (desc->structSize == 0) {
+            set_error("VplViolinDesc.structSize is 0");
+            return VplResult_InvalidArgument;
+        }
+        if ((desc->quantiles == nullptr) != (desc->quantileCounts == nullptr)) {
+            set_error("quantiles and quantileCounts go together");
+            return VplResult_InvalidArgument;
+        }
+        if (desc->quantiles != nullptr) {
+            size_t total = 0;
+            for (size_t g = 0; g < groupCount; ++g) {
+                total += desc->quantileCounts[g];
+            }
+            for (size_t k = 0; k < total; ++k) {
+                if (!(desc->quantiles[k] >= 0.0 && desc->quantiles[k] <= 1.0)) {
+                    set_error("quantiles must lie in [0, 1]");
+                    return VplResult_InvalidArgument;
+                }
+            }
+        }
+        if (desc->width < 0.0 || !std::isfinite(desc->width)) {
+            set_error("width must be non-negative");
+            return VplResult_InvalidArgument;
+        }
+        switch (desc->bwMethod) {
+        case VplViolinBandwidth_Scott: o.bandwidth = vpl::ViolinOptions::Bandwidth::Scott; break;
+        case VplViolinBandwidth_Silverman:
+            o.bandwidth = vpl::ViolinOptions::Bandwidth::Silverman;
+            break;
+        case VplViolinBandwidth_Scalar:
+            if (!(desc->bwFactor > 0.0) || !std::isfinite(desc->bwFactor)) {
+                set_error("bwFactor must be positive");
+                return VplResult_InvalidArgument;
+            }
+            o.bandwidth = vpl::ViolinOptions::Bandwidth::Scalar;
+            o.bw_factor = desc->bwFactor;
+            break;
+        default: set_error("unknown VplViolinBandwidth"); return VplResult_InvalidArgument;
+        }
+        switch (desc->side) {
+        case VplViolinSide_Both: o.side = vpl::ViolinOptions::Side::Both; break;
+        case VplViolinSide_Low: o.side = vpl::ViolinOptions::Side::Low; break;
+        case VplViolinSide_High: o.side = vpl::ViolinOptions::Side::High; break;
+        default: set_error("unknown VplViolinSide"); return VplResult_InvalidArgument;
+        }
+        for (int which = 0; which < 2; ++which) {
+            const char *const *specs = which == 0 ? desc->faceColorSpecs : desc->lineColorSpecs;
+            const size_t n = which == 0 ? desc->faceColorCount : desc->lineColorCount;
+            std::vector<vpl::Color> &out = which == 0 ? o.facecolors : o.linecolors;
+            for (size_t i = 0; specs != nullptr && i < n; ++i) {
+                vpl::Color c;
+                if (specs[i] == nullptr || !vpl::parse_color(specs[i], c)) {
+                    set_error("unrecognized colour spec");
+                    return VplResult_InvalidArgument;
+                }
+                out.push_back(c);
+            }
+        }
+        o.positions = desc->positions;
+        o.widths = desc->widths;
+        o.width = desc->width > 0.0 ? desc->width : 0.5;
+        o.showmeans = desc->showMeans != 0;
+        o.showextrema = desc->hideExtrema == 0;
+        o.showmedians = desc->showMedians != 0;
+        o.quantiles = desc->quantiles;
+        o.quantile_counts = desc->quantileCounts;
+        o.points = desc->points == 0 ? 100 : desc->points;
+        o.horizontal = desc->horizontal != 0;
+    }
+    axes_of(axes)->violinplot(values, counts, groupCount, o);
     return VplResult_Success;
     VPL_CATCH
 }
@@ -4633,6 +5732,62 @@ VplResult VPL_CALL vplAxesSetAnchor(VplAxes *axes, double x, double y)
     vpl::Axes *ax = axes_of(axes);
     ax->anchor_x = x;
     ax->anchor_y = y;
+    ax->anchor_code.clear();
+    return VplResult_Success;
+    VPL_CATCH
+}
+
+namespace
+{
+
+/* matplotlib's Bbox.coefs: each anchor name and the fractions it stands for. */
+struct AnchorCode
+{
+    const char *name;
+    double x, y;
+};
+constexpr AnchorCode kAnchorCodes[] = {
+    {"C", 0.5, 0.5}, {"SW", 0.0, 0.0}, {"S", 0.5, 0.0}, {"SE", 1.0, 0.0}, {"E", 1.0, 0.5},
+    {"NE", 1.0, 1.0}, {"N", 0.5, 1.0}, {"NW", 0.0, 1.0}, {"W", 0.0, 0.5},
+};
+
+} // namespace
+
+VplResult VPL_CALL vplAxesSetAnchorCode(VplAxes *axes, const char *code)
+{
+    VPL_TRY
+    if (axes == nullptr || code == nullptr) {
+        set_error("axes or code is null");
+        return VplResult_InvalidArgument;
+    }
+    for (const AnchorCode &a : kAnchorCodes) {
+        if (std::strcmp(a.name, code) == 0) {
+            vpl::Axes *ax = axes_of(axes);
+            ax->anchor_x = a.x;
+            ax->anchor_y = a.y;
+            ax->anchor_code = a.name;
+            return VplResult_Success;
+        }
+    }
+    set_error("anchor must be one of C, SW, S, SE, E, NE, N, NW, W");
+    return VplResult_InvalidArgument;
+    VPL_CATCH
+}
+
+VplResult VPL_CALL vplAxesGetAnchorCode(const VplAxes *axes, const char **outCode)
+{
+    VPL_TRY
+    if (axes == nullptr || outCode == nullptr) {
+        set_error("axes or outCode is null");
+        return VplResult_InvalidArgument;
+    }
+    const vpl::Axes *ax = axes_of(axes);
+    *outCode = nullptr;
+    for (const AnchorCode &a : kAnchorCodes) {
+        if (ax->anchor_code == a.name) {
+            *outCode = a.name;
+        }
+    }
     return VplResult_Success;
     VPL_CATCH
 }
@@ -5739,6 +6894,122 @@ VplResult VPL_CALL vplAxesZoomAt(VplAxes *axes,
                                   anchor_y + (view.y0 - anchor_y) * factor,
                                   anchor_x + (view.x1 - anchor_x) * factor,
                                   anchor_y + (view.y1 - anchor_y) * factor));
+    return VplResult_Success;
+    VPL_CATCH
+}
+
+VplResult VPL_CALL vplAxesPieFull(VplAxes *axes, const double *x, size_t count,
+                                  const VplPieDesc *desc)
+{
+    VPL_TRY
+    if (axes == nullptr || x == nullptr) {
+        set_error("axes or x is null");
+        return VplResult_InvalidArgument;
+    }
+    if (count == 0) {
+        set_error("count is 0");
+        return VplResult_InvalidArgument;
+    }
+    double sum = 0.0;
+    for (size_t i = 0; i < count; ++i) {
+        if (!std::isfinite(x[i]) || x[i] < 0.0) {
+            set_error("wedge sizes must be finite and non-negative");
+            return VplResult_InvalidArgument;
+        }
+        sum += x[i];
+    }
+    if (!(sum > 0.0)) {
+        set_error("all wedge sizes are zero");
+        return VplResult_InvalidArgument;
+    }
+
+    vpl::PieOptions o;
+    double label_distance = 1.1;
+    double pct_distance = 0.6;
+    double font_size = 10.0;
+    bool rotate = false;
+    const char *const *labels = nullptr;
+    const char *autopct = nullptr;
+    if (desc != nullptr) {
+        if (desc->structSize == 0) {
+            set_error("VplPieDesc.structSize is 0");
+            return VplResult_InvalidArgument;
+        }
+        if (desc->noNormalize != 0 && sum > 1.0) {
+            set_error("an unnormalized pie cannot sum to more than 1");
+            return VplResult_InvalidArgument;
+        }
+        if (!(desc->radius >= 0.0) || !std::isfinite(desc->radius)) {
+            set_error("radius must be positive");
+            return VplResult_InvalidArgument;
+        }
+        if (desc->autopct != nullptr && !is_safe_double_format(desc->autopct)) {
+            set_error("autopct must have exactly one %-conversion, ending in f/F/g/G/e/E");
+            return VplResult_InvalidArgument;
+        }
+        if (desc->explode != nullptr) {
+            for (size_t i = 0; i < count; ++i) {
+                if (!std::isfinite(desc->explode[i])) {
+                    set_error("explode must be finite");
+                    return VplResult_InvalidArgument;
+                }
+            }
+        }
+        if (desc->colorSpecs != nullptr) {
+            for (size_t i = 0; i < desc->colorCount; ++i) {
+                vpl::Color c;
+                if (desc->colorSpecs[i] == nullptr || !vpl::parse_color(desc->colorSpecs[i], c)) {
+                    set_error("unrecognized colour spec");
+                    return VplResult_InvalidArgument;
+                }
+                o.colors.push_back(c);
+            }
+        }
+        o.explode = desc->explode;
+        o.startangle = desc->startAngle;
+        o.radius = desc->radius > 0.0 ? desc->radius : 1.0;
+        o.counterclock = desc->clockwise == 0;
+        o.normalize = desc->noNormalize == 0;
+        o.center_x = desc->centerX;
+        o.center_y = desc->centerY;
+        o.frame = desc->frame != 0;
+        labels = desc->labels;
+        autopct = desc->autopct;
+        rotate = desc->rotateLabels != 0;
+        if (desc->labelDistance != 0.0) {
+            label_distance = desc->labelDistance;
+        }
+        if (desc->pctDistance != 0.0) {
+            pct_distance = desc->pctDistance;
+        }
+        if (desc->fontSize > 0.0) {
+            font_size = desc->fontSize;
+        }
+    }
+
+    vpl::Axes *ax = axes_of(axes);
+    ax->pie(x, count, o);
+
+    /* The wedge labels go outside, outer-aligned; the percentages inside,
+       centred -- both through pie_label, as matplotlib's pie does it. */
+    if (labels != nullptr) {
+        std::vector<std::string> text(count);
+        for (size_t i = 0; i < count; ++i) {
+            text[i] = labels[i] != nullptr ? labels[i] : "";
+        }
+        ax->pie_label(text.data(), count, label_distance, font_size, vpl::PieLabelAlign::Outer,
+                      rotate);
+    }
+    if (autopct != nullptr) {
+        std::vector<std::string> text(count);
+        for (size_t i = 0; i < count; ++i) {
+            char buf[128];
+            std::snprintf(buf, sizeof(buf), autopct, 100.0 * ax->pie_wedges[i].frac);
+            text[i] = buf;
+        }
+        ax->pie_label(text.data(), count, pct_distance, font_size, vpl::PieLabelAlign::Center,
+                      false);
+    }
     return VplResult_Success;
     VPL_CATCH
 }

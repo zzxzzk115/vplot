@@ -72,6 +72,16 @@ struct GraphicsContext
 
     bool has_cliprect = false;
     Bbox cliprect;
+
+    /* Whether vertices snap to the pixel grid: Auto snaps only paths made of
+       horizontal and vertical segments; On and Off force it, as Line2D does for
+       markers (MarkerStyle's snap threshold against the marker's pixel size). */
+    enum class Snap
+    {
+        Auto,
+        On,
+        Off,
+    } snap = Snap::Auto;
 };
 
 /* Where a string sits relative to the anchor point it is drawn at. */

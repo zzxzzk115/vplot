@@ -10,11 +10,14 @@
 #ifndef VPL_CORE_FIGURE_H
 #define VPL_CORE_FIGURE_H
 
+#include <cstdint>
+#include <limits>
 #include <memory>
 #include <string>
 #include <vector>
 
 #include "colormap.h"
+#include "delaunay.h"
 #include "geometry.h"
 #include "markers.h"
 #include "path.h"
@@ -43,6 +46,166 @@ enum class FillStep
     Pre,
     Post,
     Mid,
+};
+
+/* hist's histtype: touching bars (side by side for several datasets), bars
+   stacked on each other, an unfilled outline, or a filled outline. */
+enum class HistType
+{
+    Bar,
+    BarStacked,
+    Step,
+    StepFilled,
+};
+
+/* hist's align: where each bar sits relative to its bin. */
+enum class HistAlign
+{
+    Mid,
+    Left,
+    Right,
+};
+
+/*
+ * Everything hist takes beyond the data -- matplotlib's keyword arguments.
+ * The defaults reproduce hist(x).
+ */
+struct HistOptions
+{
+    /* Equal-width bins over the range, unless explicit edges are given. */
+    std::size_t bins = 10;
+    /* Monotonically increasing bin edges; overrides bins and range. */
+    const double *edges = nullptr;
+    std::size_t edge_count = 0;
+
+    /* The span the equal bins cover. Unset means the data's own range. */
+    bool has_range = false;
+    double range_lo = 0.0;
+    double range_hi = 0.0;
+
+    bool density = false;
+    /* 0 off, positive accumulates left to right, negative right to left. */
+    int cumulative = 0;
+    HistType type = HistType::Bar;
+    HistAlign align = HistAlign::Mid;
+    /* orientation='horizontal': bars along x, bins up y. */
+    bool horizontal = false;
+    /* Bar width as a fraction of the bin; NaN for matplotlib's automatic
+       choice (0.8 for several side-by-side datasets, 1 otherwise). */
+    double rwidth = std::numeric_limits<double>::quiet_NaN();
+    bool stacked = false;
+    double bottom = 0.0;
+    /* log=True: the value axis becomes a log scale (clipping non-positive
+       values), as bar(log=True) and the step branch both do. */
+    bool log = false;
+};
+
+/* violinplot's keyword arguments. The defaults reproduce violinplot(data). */
+struct ViolinOptions
+{
+    /* One per group; null for 1, 2, 3, ... */
+    const double *positions = nullptr;
+    /* One per group; null for `width` everywhere. */
+    const double *widths = nullptr;
+    double width = 0.5;
+    bool showmeans = false;
+    bool showextrema = true;
+    bool showmedians = false;
+    /* quantiles: `quantile_counts[g]` fractions per group, laid end to end in
+       `quantiles`; null for none. */
+    const double *quantiles = nullptr;
+    const std::size_t *quantile_counts = nullptr;
+    std::size_t points = 100;
+    /* bw_method: Scott's rule, Silverman's, or a fixed factor (> 0). */
+    enum class Bandwidth { Scott, Silverman, Scalar } bandwidth = Bandwidth::Scott;
+    double bw_factor = 0.0;
+    /* side: both halves, or only the low or high one. */
+    enum class Side { Both, Low, High } side = Side::Both;
+    bool horizontal = false;
+    /* Unset means the next line-cycle colour (the body at 30% alpha). */
+    std::vector<Color> facecolors;
+    std::vector<Color> linecolors;
+};
+
+/* hexbin's reduce_C_function, for the reductions worth naming. */
+enum class HexReduce
+{
+    Mean,
+    Sum,
+    Max,
+    Min,
+    Median,
+    Std,
+};
+
+/* hexbin's keyword arguments. The defaults reproduce hexbin(x, y). */
+struct HexbinOptions
+{
+    std::size_t nx = 100;
+    /* 0 means nx / sqrt(3), which keeps the hexagons regular. */
+    std::size_t ny = 0;
+    /* One value per point to reduce per hexagon instead of counting. */
+    const double *C = nullptr;
+    HexReduce reduce = HexReduce::Mean;
+    /* Hide hexagons with fewer points than this; 0 is mincnt=None (which
+       means 1 once C is given). */
+    std::size_t mincnt = 0;
+    bool has_extent = false;
+    double extent[4] = {0.0, 0.0, 0.0, 0.0}; /* xmin, xmax, ymin, ymax */
+    Colormap cmap = Colormap::Viridis;
+    bool has_vlimits = false;
+    double vmin = 0.0;
+    double vmax = 0.0;
+    /* bins='log': a LogNorm, under which empty hexagons are not painted. */
+    bool log_bins = false;
+    /* bins=N: colour by which of N equal value bins a hexagon falls in. */
+    std::size_t bins = 0;
+    /* xscale/yscale='log': bin in log10 space (the extent is in log10 units
+       too) and switch the axis to a log scale. */
+    bool xlog = false;
+    bool ylog = false;
+    /* marginals=True: a strip of bars along the bottom and the left edge,
+       each the reduction of C (ones without C) over an x or y bin. */
+    bool marginals = false;
+};
+
+/* contourf's extend: which ends of the level range get an open-ended band
+   reaching past the outermost level, coloured with the colormap's extremes. */
+enum class ContourExtend
+{
+    Neither,
+    Min,
+    Max,
+    Both,
+};
+
+/* pie's keyword arguments. The defaults reproduce pie(x). */
+struct PieOptions
+{
+    /* Per-wedge offset along its middle angle, in radii; null for none. */
+    const double *explode = nullptr;
+    /* Wedge colours, cycled; empty means the patch cycle. */
+    std::vector<Color> colors;
+    double startangle = 0.0; /* degrees, from 3 o'clock */
+    double radius = 1.0;
+    bool counterclock = true;
+    /* normalize=False takes the values as fractions of the whole circle. */
+    bool normalize = true;
+    double center_x = 0.0;
+    double center_y = 0.0;
+    /* frame=True keeps the axes and autoscales to the pie instead of hiding
+       the frame and pinning the limits at +/-1.25 around the centre. */
+    bool frame = false;
+};
+
+/* pie_label's alignment: centred on the point, or pushed outwards from it
+   (left-aligned on the right half, right-aligned on the left). Auto is outer
+   past distance 1 and centred inside it. */
+enum class PieLabelAlign
+{
+    Auto,
+    Center,
+    Outer,
 };
 
 /* Where a stackplot puts its baseline -- matplotlib's baseline argument. Zero
@@ -135,12 +298,64 @@ struct Line2D
 
     std::string label;
 
-    /* Symmetric error bars, empty when there are none. matplotlib models these
-       as a separate LineCollection inside an ErrorbarContainer. */
+    /* Error bars, empty when there are none. matplotlib models these as a
+       separate LineCollection inside an ErrorbarContainer. `yerr` is the
+       downward extent; `yerr_upper` the upward one, or empty for symmetric
+       bars (likewise for x: left, then right). */
     std::vector<double> yerr;
     std::vector<double> xerr;
+    std::vector<double> yerr_upper;
+    std::vector<double> xerr_upper;
     double capsize = 0.0;    /* errorbar.capsize, points; 0 means no caps */
     double elinewidth = 0.0; /* 0 follows the line's own width, as errorbar does */
+    /* ecolor: unset means the line's own colour. */
+    bool has_ecolor = false;
+    Color ecolor;
+    /* capthick: negative means markeredgewidth, the errorbar.capthick None. */
+    double capthick = -1.0;
+    /* errorevery=(offset, step): bars only on every step-th point from offset. */
+    std::size_t errorevery_offset = 0;
+    std::size_t errorevery_step = 1;
+    /* barsabove: the bars over the data line rather than under it. */
+    bool barsabove = false;
+    /* elinestyle: the bars' own line style. */
+    LineStyle elinestyle = LineStyle::Solid;
+    /* lolims/uplims (and xlolims/xuplims): per-point flags, empty for none.
+       A limited point's bar runs one way only -- lolims drops the lower
+       extent -- and ends in a caret pointing on along the bar. */
+    std::vector<std::uint8_t> lolims;
+    std::vector<std::uint8_t> uplims;
+    std::vector<std::uint8_t> xlolims;
+    std::vector<std::uint8_t> xuplims;
+    /* fmt='none': only the error bars are drawn, and only they count towards
+       the limits. */
+    bool errorbars_only = false;
+
+    /* solid_capstyle='butt', as boxplot's medians and mean lines have it,
+       instead of lines.solid_capstyle's projecting end. */
+    bool butt_cap = false;
+
+    /* Whether point i carries an error bar under errorevery. */
+    bool error_drawn(std::size_t i) const
+    {
+        return i >= errorevery_offset && (i - errorevery_offset) % errorevery_step == 0;
+    }
+    static bool flag(const std::vector<std::uint8_t> &v, std::size_t i)
+    {
+        return i < v.size() && v[i] != 0;
+    }
+    /* The bar's extents below and above point i (or left and right). A limit
+       zeroes the side it removes, as matplotlib's low/high do. */
+    double yerr_lo(std::size_t i) const { return flag(lolims, i) ? 0.0 : std::fabs(yerr[i]); }
+    double yerr_hi(std::size_t i) const
+    {
+        return flag(uplims, i) ? 0.0 : std::fabs(yerr_upper.empty() ? yerr[i] : yerr_upper[i]);
+    }
+    double xerr_lo(std::size_t i) const { return flag(xlolims, i) ? 0.0 : std::fabs(xerr[i]); }
+    double xerr_hi(std::size_t i) const
+    {
+        return flag(xuplims, i) ? 0.0 : std::fabs(xerr_upper.empty() ? xerr[i] : xerr_upper[i]);
+    }
 
     /* Dash pattern in points, resolved from linestyle and linewidth. */
     std::vector<std::pair<double, double>> dashes() const
@@ -177,6 +392,22 @@ struct PolyPatch
      * InsetIndicator, which is a plain Artist and never reaches dataLim.
      */
     bool counts_towards_limits = true;
+
+    /*
+     * Drawn with the lines (zorder 2) rather than the patches (zorder 1). A
+     * step histogram's outline is a Polygon that matplotlib lifts to
+     * Line2D.zorder so it stays visible over filled shapes.
+     */
+    bool line_tier = false;
+
+    /* A coordinate in axes fraction (0..1 across the frame) rather than in
+       data, per direction -- the blended get_xaxis_transform('grid') that
+       hexbin's marginal bars use. Such a patch never counts towards limits. */
+    bool x_in_axes = false;
+    bool y_in_axes = false;
+    /* clip_on: clipped to the axes box. A pie's wedges are not, so an
+       exploded wedge can reach past the frame. */
+    bool clip = true;
 
     std::string label;
 };
@@ -409,6 +640,15 @@ struct QuiverField
     double width = 0.0;
 
     Color color = Color::rgb(0.0, 0.0, 0.0);
+    /* Per-arrow colour: quiver(X, Y, U, V, C) maps `c` through `cmap`
+       (normalised over C unless vmin/vmax are given); `colors` is an explicit
+       colour per arrow. Either takes over from `color` when non-empty. */
+    std::vector<double> c;
+    Colormap cmap = Colormap::Viridis;
+    bool has_vlimits = false;
+    double vmin = 0.0;
+    double vmax = 0.0;
+    std::vector<Color> colors;
     QuiverPivot pivot = QuiverPivot::Tail;
 
     /* In shaft widths. matplotlib's defaults; head is 5 long, 3 wide, and the
@@ -526,6 +766,28 @@ struct BoxStats
     double whishi = 0.0;
     /* Drawn individually beyond the whiskers. Usually empty. */
     std::vector<double> fliers;
+    /* Only needed for showmeans and shownotches; NaN when not known. */
+    double mean = std::numeric_limits<double>::quiet_NaN();
+    double cilo = std::numeric_limits<double>::quiet_NaN();
+    double cihi = std::numeric_limits<double>::quiet_NaN();
+};
+
+/* bxp's (and so boxplot's) keyword arguments. Defaults reproduce bxp(stats). */
+struct BoxOptions
+{
+    const double *positions = nullptr; /* one per box; null for 1, 2, ... */
+    const double *widths = nullptr;    /* one per box; null for the automatic width */
+    bool horizontal = false;
+    bool patch_artist = false; /* a filled C0 box instead of an outline */
+    bool shownotches = false;
+    bool showmeans = false;
+    bool meanline = false; /* the mean as a dashed line across the box, not a marker */
+    bool showcaps = true;
+    bool showbox = true;
+    bool showfliers = true;
+    bool manage_ticks = true;
+    /* Tick labels, one per box; null labels each tick with its position. */
+    const std::string *labels = nullptr;
 };
 
 struct ContourSet
@@ -563,6 +825,10 @@ struct ContourSet
      */
     bool filled = false;
     std::vector<Path> band_paths;
+    /* The band boundaries: the levels, plus +/-1e250 at an extended end, as
+       matplotlib's _levels. Empty for line contours. */
+    std::vector<double> band_levels;
+    ContourExtend extend = ContourExtend::Neither;
 
     /*
      * clabel: contour labels.
@@ -613,6 +879,9 @@ struct SegmentCollection
     Color color = Color::rgb(0.121569, 0.466667, 0.705882);
     double linewidth = 1.5; /* lines.linewidth */
     LineStyle linestyle = LineStyle::Solid;
+    /* A Collection's butt caps, unless asked otherwise (a one-sided violin's
+       lines are projecting). */
+    CapStyle cap = CapStyle::Butt;
     std::string label;
 
     std::vector<std::pair<double, double>> dashes() const
@@ -628,6 +897,29 @@ struct SegmentCollection
  * heads, and a marker colour that follows the stalk colour unless the markerfmt
  * gives one of its own.
  */
+/*
+ * triplot's format: the fmt string's colour, line style and marker. Without a
+ * colour, the edges and the nodes each take the next colour of the line cycle,
+ * as matplotlib's two ax.plot calls do.
+ */
+struct TriplotStyle
+{
+    bool has_color = false;
+    Color color;
+    LineStyle linestyle = LineStyle::Solid;
+    MarkerStyle marker = MarkerStyle::None;
+};
+
+/* tripcolor's colour mapping. */
+struct TripcolorOptions
+{
+    Colormap cmap = Colormap::Viridis;
+    bool has_vlimits = false;
+    double vmin = 0.0;
+    double vmax = 0.0;
+    double alpha = 1.0;
+};
+
 struct StemStyle
 {
     double bottom = 0.0;
@@ -849,6 +1141,9 @@ class Axes
      */
     double anchor_x = 0.5;
     double anchor_y = 0.5;
+    /* The name the anchor was set by ('C', 'SW', ...), or empty when it was
+       set as a pair -- get_anchor hands back whichever form it was given. */
+    std::string anchor_code = "C";
 
     /*
      * locator_params(nbins=...): how many intervals the tick locator may use,
@@ -1094,11 +1389,16 @@ class Axes
     std::vector<QuiverKey> quiver_keys;
     std::vector<std::unique_ptr<BarbField>> barb_fields;
 
-    /* Wedge angles in degrees, left by pie() for pie_label() to read. */
+    /* Wedge angles in degrees and where each wedge sits, left by pie() for
+       pie_label() to read. */
     struct PieWedge
     {
         double theta1;
         double theta2;
+        double cx = 0.0;
+        double cy = 0.0;
+        double r = 1.0;
+        double frac = 0.0; /* its share of the whole, for autopct */
     };
     std::vector<PieWedge> pie_wedges;
 
@@ -1153,6 +1453,22 @@ class Axes
      */
     PolyPatch &hist(const double *values, std::size_t n, std::size_t bins = 10,
                     bool density = false);
+
+    /*
+     * The general histogram: one or more datasets binned on shared edges,
+     * matplotlib's hist with all its keyword arguments. `weights` may be null,
+     * or hold one array (itself possibly null) per dataset. Returns one patch
+     * per dataset, in dataset order. `out_tops` receives the bar heights
+     * (datasets x bins, after stacking and accumulation) and `out_edges` the
+     * bin edges -- the n and bins matplotlib returns.
+     */
+    std::vector<PolyPatch *> hist(const double *const *datasets,
+                                  const std::size_t *counts,
+                                  const double *const *weights,
+                                  std::size_t ndatasets,
+                                  const HistOptions &options,
+                                  std::vector<double> *out_tops = nullptr,
+                                  std::vector<double> *out_edges = nullptr);
 
     /* Bars along x instead of up from it: the width is the value and the
        height is the thickness, and the sticky baseline moves to the x axis. */
@@ -1297,6 +1613,11 @@ class Axes
      * them.
      */
     void boxplot(const double *values, const std::size_t *counts, std::size_t ngroups);
+    /* `whis` reaches that many IQRs past the quartiles; with `whis_percentiles`
+       (two values, 0..100) the whiskers sit at those percentiles instead. */
+    void boxplot(const double *values, const std::size_t *counts, std::size_t ngroups,
+                 const BoxOptions &options, double whis = 1.5,
+                 const double *whis_percentiles = nullptr);
 
     /*
      * The same drawing from statistics already computed -- bxp.
@@ -1308,6 +1629,7 @@ class Axes
      * caller says.
      */
     void bxp(const BoxStats *stats, std::size_t ngroups);
+    void bxp(const BoxStats *stats, std::size_t ngroups, const BoxOptions &options);
 
     /*
      * A kernel density estimate per group, mirrored about its position.
@@ -1322,6 +1644,8 @@ class Axes
      * cycle, not one per group.
      */
     void violinplot(const double *values, const std::size_t *counts, std::size_t ngroups);
+    void violinplot(const double *values, const std::size_t *counts, std::size_t ngroups,
+                    const ViolinOptions &options);
 
     ReferenceLine &axhline(double y);
     ReferenceLine &axvline(double x);
@@ -1383,7 +1707,8 @@ class Axes
      * wedge angles behind for it to read.
      */
     void pie_label(const std::string *labels, std::size_t n, double distance = 0.6,
-                   double fontsize = 10.0);
+                   double fontsize = 10.0, PieLabelAlign align = PieLabelAlign::Auto,
+                   bool rotate = false);
 
     /*
      * The spectral family. All seven go through one helper -- see
@@ -1452,11 +1777,16 @@ class Axes
      * `normed` divides by sqrt(sum x^2 * sum y^2), which puts an
      * autocorrelation's zero lag at exactly 1.
      */
-    void xcorr(const double *x, const double *y, std::size_t n, int maxlags = 10,
-               bool normed = true);
+    /* `detrend` is removed from both series first (mlab.detrend_none, _mean
+       or _linear). With usevlines false the correlations are a marker-only
+       plot() instead -- that Line2D is returned; otherwise null. */
+    Line2D *xcorr(const double *x, const double *y, std::size_t n, int maxlags = 10,
+                  bool normed = true, SpectralDetrend detrend = SpectralDetrend::None,
+                  bool usevlines = true);
 
     /* A series against itself -- acorr. */
-    void acorr(const double *x, std::size_t n, int maxlags = 10, bool normed = true);
+    Line2D *acorr(const double *x, std::size_t n, int maxlags = 10, bool normed = true,
+                  SpectralDetrend detrend = SpectralDetrend::None, bool usevlines = true);
 
     /*
      * Streamlines through a vector field -- streamplot. `u` and `v` are
@@ -1537,6 +1867,10 @@ class Axes
      * the literal text "nan".
      */
     SegmentCollection &triplot(const double *x, const double *y, std::size_t n);
+    /* triplot(x, y, triangles, fmt): the given (already unmasked) triangles,
+       edges as one collection and the nodes as a marker-only line. */
+    void triplot(const double *x, const double *y, std::size_t n,
+                 const std::vector<Triangle> &tris, const TriplotStyle &style);
 
     /*
      * Iso-lines over an unstructured triangular grid -- tricontour.
@@ -1549,6 +1883,9 @@ class Axes
      */
     ContourSet &tricontour(const double *x, const double *y, const double *z,
                            std::size_t n, const double *levels, std::size_t nlevels);
+    ContourSet &tricontour(const double *x, const double *y, const double *z,
+                           std::size_t n, const std::vector<Triangle> &tris,
+                           const double *levels, std::size_t nlevels);
 
     /*
      * Filled bands over the same triangulation -- tricontourf.
@@ -1559,6 +1896,10 @@ class Axes
      */
     ContourSet &tricontourf(const double *x, const double *y, const double *z,
                             std::size_t n, const double *levels, std::size_t nlevels);
+    ContourSet &tricontourf(const double *x, const double *y, const double *z,
+                            std::size_t n, const std::vector<Triangle> &tris,
+                            const double *levels, std::size_t nlevels,
+                            ContourExtend extend);
 
     /*
      * Label the lines of a contour set -- clabel.
@@ -1577,7 +1918,14 @@ class Axes
      * structure and grid lines only fight it.
      */
     void tripcolor(const double *x, const double *y, const double *z, std::size_t n);
+    /* tripcolor over given triangles with one value per triangle (`facevals`,
+       parallel to `tris`): the mean of its vertices, or a face colour. The data
+       limits take in every point, used or not, as matplotlib's do. */
+    void tripcolor(const double *x, const double *y, std::size_t n,
+                   const std::vector<Triangle> &tris, const std::vector<double> &facevals,
+                   const TripcolorOptions &options);
     void hexbin(const double *x, const double *y, std::size_t n, std::size_t gridsize);
+    void hexbin(const double *x, const double *y, std::size_t n, const HexbinOptions &options);
 
     /*
      * A pie chart. Each value becomes a wedge proportional to its share of the
@@ -1588,6 +1936,11 @@ class Axes
      * no ticks, limits pinned at +/-1.25.
      */
     void pie(const double *values, std::size_t n);
+
+    /* pie with its keyword arguments. Values are expected non-negative and
+       finite with a positive sum (the C ABI checks); without normalize their
+       sum must not exceed 1. */
+    void pie(const double *values, std::size_t n, const PieOptions &options);
 
     /* Iso-lines through a scalar field. Levels are extracted by marching squares
        when this is called, so later changes to `values` are not picked up --
@@ -1602,7 +1955,18 @@ class Axes
     ContourSet &contourf(const double *values, std::size_t rows, std::size_t cols,
                          const double *levels, std::size_t nlevels,
                          double x0 = 0.0, double x1 = 0.0,
-                         double y0 = 0.0, double y1 = 0.0);
+                         double y0 = 0.0, double y1 = 0.0,
+                         ContourExtend extend = ContourExtend::Neither);
+
+    /*
+     * The levels contour picks when given a count rather than a list --
+     * contour(Z, N), and contour(Z) with N = 7. A MaxNLocator(N + 1) over the
+     * data's range, trimmed to one level either side of it (one fewer at an
+     * extended end, unless that would leave fewer than three).
+     */
+    static std::vector<double> auto_contour_levels(const double *values, std::size_t count,
+                                                   std::size_t n,
+                                                   ContourExtend extend = ContourExtend::Neither);
 
     ContourSet &contour(const double *values, std::size_t rows, std::size_t cols,
                         const double *levels, std::size_t nlevels,
@@ -1820,13 +2184,19 @@ class Axes
 
   private:
     void draw_grid_and_ticks(Renderer &renderer, const Bbox &box, double px_per_pt);
-    void draw_patches(Renderer &renderer, const Bbox &box, double px_per_pt);
+    /* `line_tier` picks the patches lifted to zorder 2 (step outlines) rather
+       than the ordinary zorder-1 ones. */
+    void draw_patches(Renderer &renderer, const Bbox &box, double px_per_pt,
+                      bool line_tier = false);
     void draw_spans(Renderer &renderer, const Bbox &box);
     void draw_collections(Renderer &renderer, const Bbox &box, double px_per_pt);
     void draw_segments(Renderer &renderer, const Bbox &box);
     void draw_texts(Renderer &renderer, const Bbox &box, double px_per_pt);
     void draw_images(Renderer &renderer, const Bbox &box);
-    void draw_contours(Renderer &renderer, const Bbox &box, double px_per_pt);
+    /* Filled sets in the patch tier (zorder 1), line sets with their labels
+       in the line tier (a LineCollection's zorder 2). */
+    void draw_contours(Renderer &renderer, const Bbox &box, double px_per_pt,
+                       bool line_tier);
 
     void draw_tables(Renderer &renderer, const Bbox &box, double px_per_pt);
 

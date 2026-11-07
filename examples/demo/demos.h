@@ -34,11 +34,13 @@ typedef enum VplDemoId
     VplDemo_Colors,
     VplDemo_FormatStrings,
     VplDemo_ErrorBars,
+    VplDemo_ErrorBarFull,
     VplDemo_FillBetween,
     VplDemo_FillWhere,
     VplDemo_Scatter,
     VplDemo_Bars,
     VplDemo_Boxes,
+    VplDemo_BoxesFull,
     VplDemo_Table,
     VplDemo_Quiver,
     VplDemo_Barbs,
@@ -46,6 +48,7 @@ typedef enum VplDemoId
     VplDemo_Correlate,
     VplDemo_GroupedBar,
     VplDemo_Pie,
+    VplDemo_PieFull,
     VplDemo_Spectral,
     VplDemo_Specgram,
     VplDemo_Inset,
@@ -62,10 +65,13 @@ typedef enum VplDemoId
     VplDemo_Contour,
     VplDemo_Clabel,
     VplDemo_Hexbin,
+    VplDemo_HexbinFull,
     VplDemo_Triplot,
     VplDemo_TriContour,
     VplDemo_TriContourF,
     VplDemo_TriPcolor,
+    VplDemo_TriMasked,
+    VplDemo_TriFaces,
     VplDemo_MinorTicks,
     VplDemo_LogScale,
     VplDemo_AxisLimits,
@@ -74,8 +80,10 @@ typedef enum VplDemoId
     VplDemo_ColorbarHorizontal,
     /* The distributions. */
     VplDemo_Histogram,
+    VplDemo_HistFull,
     VplDemo_Ecdf,
     VplDemo_Violins,
+    VplDemo_ViolinsFull,
     VplDemo_BoxStats,
 
     /* Series drawn as something other than a curve. */
@@ -95,6 +103,7 @@ typedef enum VplDemoId
 
     /* Fields. */
     VplDemo_ContourFilled,
+    VplDemo_ContourAuto,
     VplDemo_Matrix,
     VplDemo_Mesh,
 
@@ -161,6 +170,12 @@ static const VplDemoInfo kVplDemos[VplDemo_Count] = {
      "VplLineField_Format"},
     {"Error bars", "error_bars", "Symmetric y error with optional caps.",
      "vplAxesErrorBar"},
+    {"Error bars (full)", "error_bar_full",
+     "Asymmetric y error (a short upper and a growing lower bar) plus an "
+     "x error, on every other point only, in a separate ecolor with thick "
+     "caps -- yerr=[lo, hi], xerr, errorevery=2. The last bar is an upper "
+     "limit (uplims), drawn downward to a caret.",
+     "vplAxesErrorBarFull"},
     {"Fill between", "fill_between", "Confidence bands and envelopes.",
      "vplAxesFillBetween"},
     {"Fill where", "fill_where",
@@ -181,6 +196,10 @@ static const VplDemoInfo kVplDemos[VplDemo_Count] = {
      "-- which is what to reach for when the samples are gone and only the "
      "summary survives.",
      "vplAxesBoxPlot / vplAxesBxp"},
+    {"Box plots (full)", "boxes_full",
+     "patch_artist boxes with notches (the median's 95% interval) and mean "
+     "markers, laid horizontally with named ticks.",
+     "vplAxesBoxPlotFull"},
     {"Table", "table",
      "A grid of text under the axes, positioned in axes units rather than data "
      "units -- so it neither moves with a pan nor counts towards the limits. "
@@ -213,8 +232,9 @@ static const VplDemoInfo kVplDemos[VplDemo_Count] = {
      "Autocorrelation as a stalk per lag. Normed, so the zero lag is exactly "
      "1. This is a direct sum rather than a spectrum -- it sits beside psd and "
      "csd in matplotlib's documentation but shares none of their machinery and "
-     "needs no FFT.",
-     "vplAxesACorr / vplAxesXCorr"},
+     "needs no FFT. The markers are the same autocorrelation with "
+     "detrend_mean, in the usevlines=False form.",
+     "vplAxesACorr / vplAxesACorrFull"},
     {"Grouped bars", "grouped_bar",
      "Bars side by side within each group. Nothing here says how wide a bar "
      "is: it falls out of fitting every dataset's bar, the gaps between them "
@@ -227,6 +247,11 @@ static const VplDemoInfo kVplDemos[VplDemo_Count] = {
      "reconfigures the axes rather than living in one: square aspect, no "
      "frame, no ticks.",
      "vplAxesPie / vplAxesPieLabel"},
+    {"Pie (full)", "pie_full",
+     "Outer labels and autopct percentages, the largest wedge exploded, "
+     "starting at 12 o'clock and running clockwise -- then the same names "
+     "again, rotated along each wedge, through pie_label's own alignment.",
+     "vplAxesPieFull, vplAxesPieLabelFull"},
     {"Power spectrum", "spectral",
      "Welch's method: cut the signal into segments, window each, transform, "
      "and average the periodograms -- which is what turns one noisy transform "
@@ -306,9 +331,15 @@ static const VplDemoInfo kVplDemos[VplDemo_Count] = {
     {"Hexbin", "hexbin",
      "Scatter density as a honeycomb. The tiling is two interleaved lattices, "
      "and a point joins whichever centre is nearer under dx^2 + 3dy^2 -- that "
-     "metric is what makes the cells hexagons. Empty bins are dropped, which is "
-     "the difference from a 2-D histogram.",
+     "metric is what makes the cells hexagons. Every bin is drawn, the empty "
+     "ones in the colormap's lowest colour, as matplotlib does without mincnt.",
      "vplAxesHexbin"},
+    {"Hexbin (full)", "hexbin_full",
+     "The same points carrying a value each: C is reduced to its mean per "
+     "hexagon, mincnt=3 hides the sparse ones, and the colour is magma. "
+     "marginals=True adds the strips along the bottom and left edges: C's "
+     "mean over each column and row of bins.",
+     "vplAxesHexbinFull"},
     {"Triplot", "triplot",
      "An unstructured grid drawn as its edges. No triangles are given, so the "
      "Delaunay triangulation is computed -- the one where no point falls inside "
@@ -332,6 +363,16 @@ static const VplDemoInfo kVplDemos[VplDemo_Count] = {
      "cells a soft edge is covered by neither side and the mesh comes out "
      "veined.",
      "vplAxesTriPcolor"},
+    {"Triangles with a hole", "tri_masked",
+     "Triangles given rather than computed, two per quad of a lattice, with a "
+     "mask cutting a hole out of the middle. Automatic levels, extend='both' "
+     "for the open-ended bands, and the mesh itself drawn over the top.",
+     "vplAxesTriContourFFull, vplAxesTriplotFull"},
+    {"Per-triangle colours", "tri_faces",
+     "vplTriangulate hands back the Delaunay triangles, so a value can be "
+     "given per triangle (facecolors=) rather than per point, with automatic "
+     "iso-lines of the point field laid over it.",
+     "vplTriangulate, vplAxesTriPcolorFull, vplAxesTriContourFull"},
     {"Minor ticks", "minor_ticks",
      "Unlabelled ticks between the majors. The count is 5 when the major step "
      "divides evenly into fifths and 4 otherwise -- a fixed number would land "
@@ -361,6 +402,11 @@ static const VplDemoInfo kVplDemos[VplDemo_Count] = {
     {"Histogram", "histogram",
      "Counts over equal bins, with the bars sitting on the axis.",
      "vplAxesHist"},
+    {"Histogram options", "hist_full",
+     "Two datasets stacked on explicit, uneven bin edges, one of them "
+     "weighted, with the same stack at 32 equal bins as step outlines on "
+     "top -- hist's keyword arguments through vplAxesHistFull.",
+     "vplAxesHistFull"},
     {"ECDF", "ecdf",
      "The empirical distribution: a post-step rising 1/n at each observation, "
      "pinned to 0 and 1.",
@@ -369,10 +415,14 @@ static const VplDemoInfo kVplDemos[VplDemo_Count] = {
      "A Gaussian kernel density per group, mirrored. One colour for the whole "
      "call, not one per group.",
      "vplAxesViolinPlot"},
+    {"Violins (full)", "violins_full",
+     "Split violins: two datasets per position, one drawn as the low half and "
+     "one as the high half, with medians and quartiles marked.",
+     "vplAxesViolinPlotFull"},
     {"Boxes from statistics", "box_stats",
      "bxp: the same boxes from five numbers you already have, for data too "
-     "large to keep.",
-     "vplAxesBxp"},
+     "large to keep. The last box also carries a mean, drawn as a dashed line.",
+     "vplAxesBxp, vplAxesBxpFull"},
 
     {"Stem", "stem",
      "Stalks, heads and a C3 baseline -- three artists from one call.",
@@ -418,6 +468,12 @@ static const VplDemoInfo kVplDemos[VplDemo_Count] = {
      "Bands between consecutive levels, coloured at each band's midpoint and "
      "drawn without antialiasing.",
      "vplAxesContourF"},
+    {"Contours (automatic levels)", "contour_auto",
+     "contourf(Z, 8, extend='both') with no level list: the levels come from "
+     "a MaxNLocator over the data, and the open-ended bands past the first "
+     "and last levels take the colormap's ends. contour(Z) at the default 7 "
+     "lines on top.",
+     "vplAxesContourF, vplAxesContour"},
     {"Matrix", "matrix",
      "matshow puts the column indices along the top; spy shows only where the "
      "matrix is non-zero.",
@@ -771,6 +827,35 @@ static VplResult vplBuildDemo(VplDemoId id, const VplDemoParams *p, VplFigure **
                 break;
             }
 
+            case VplDemo_ErrorBarFull: {
+                static double lo[kVplDemoSparse], hi[kVplDemoSparse], xe[kVplDemoSparse];
+                static uint8_t uplim[kVplDemoSparse];
+                for (int i = 0; i < kVplDemoSparse; ++i) {
+                    lo[i] = 0.05 + 0.02 * i;
+                    hi[i] = 0.08;
+                    xe[i] = 0.15;
+                    /* The last point that carries a bar under errorevery=2. */
+                    uplim[i] = (i % 2 == 0 && i + 2 >= kVplDemoSparse) ? 1 : 0;
+                }
+                memset(&ld, 0, sizeof(ld));
+                ld.structSize = sizeof(ld);
+                ld.set = VplLineField_Format | VplLineField_Label;
+                ld.format = "s";
+                ld.label = "measured";
+                VplErrorBarDesc eb;
+                memset(&eb, 0, sizeof(eb));
+                eb.structSize = sizeof(eb);
+                eb.capsize = p->capSize;
+                eb.capthick = 2.0;
+                eb.eColorSpec = "tab:gray";
+                eb.errorEveryStep = 2;
+                eb.uplims = uplim;
+                vplAxesErrorBarFull(ax, sx, sa, kVplDemoSparse, lo, hi, xe, NULL, &eb, &ld, NULL);
+                vplAxesSetXLabel(ax, "t");
+                vplAxesSetYLabel(ax, "signal");
+                break;
+            }
+
             case VplDemo_FillBetween: {
                 static double lo[kVplDemoN], hi[kVplDemoN];
                 for (int i = 0; i < kVplDemoN; ++i) {
@@ -994,6 +1079,9 @@ static VplResult vplBuildDemo(VplDemoId id, const VplDemoParams *p, VplFigure **
                     cs[i] = sin(i * 0.3) + 0.4 * cos(i * 0.11);
                 }
                 vplAxesACorr(ax, cs, CN, 20, 1);
+                /* The same series with its mean removed, as markers over the
+                   stalks: detrend_mean pulls every lag's correlation down. */
+                vplAxesACorrFull(ax, cs, CN, 20, 1, VplSpectralDetrend_Mean, 0, NULL, NULL);
                 vplAxesSetXLabel(ax, "lag");
                 vplAxesSetYLabel(ax, "correlation");
                 break;
@@ -1017,6 +1105,25 @@ static VplResult vplBuildDemo(VplDemoId id, const VplDemoParams *p, VplFigure **
                                                   "epsilon"};
                 vplAxesPie(ax, pv, 5);
                 vplAxesPieLabel(ax, pl, 5, 0.6, 10.0);
+                break;
+            }
+
+            case VplDemo_PieFull: {
+                static const double pv[5] = {35.0, 25.0, 20.0, 12.0, 8.0};
+                static const char *const pl[5] = {"alpha", "beta", "gamma", "delta",
+                                                  "epsilon"};
+                static const double ex[5] = {0.08, 0.0, 0.0, 0.0, 0.0};
+                VplPieDesc pie;
+                memset(&pie, 0, sizeof(pie));
+                pie.structSize = sizeof(pie);
+                pie.explode = ex;
+                pie.labels = pl;
+                pie.autopct = "%1.0f%%";
+                pie.startAngle = 90.0;
+                pie.clockwise = 1;
+                vplAxesPieFull(ax, pv, 5, &pie);
+                /* Wedge names along the rim, rotated with their wedges. */
+                vplAxesPieLabelFull(ax, pl, 5, 0.85, 7.0, VplPieLabelAlign_Center, 1);
                 break;
             }
 
@@ -1083,6 +1190,27 @@ static VplResult vplBuildDemo(VplDemoId id, const VplDemoParams *p, VplFigure **
                 vplAxesBoxPlot(ax, bpv, bpc, 4);
                 vplAxesSetXLabel(ax, "group");
                 vplAxesSetYLabel(ax, "value");
+                break;
+            }
+
+            case VplDemo_BoxesFull: {
+                static const double bpv[] = {
+                    1.0,  2.0,  3.0,  4.0,  5.0,  6.0,  7.0, 8.0, 20.0,
+                    4.0,  4.5,  5.0,  5.2,  5.5,  6.0,
+                    0.0,  1.0,  1.5,  2.0,  3.0,  10.0,
+                    2.0,  4.0,  6.0,  8.0,  10.0, 12.0, 14.0};
+                static const size_t bpc[4] = {9, 6, 6, 7};
+                static const char *const names[4] = {"tail", "tight", "skewed", "wide"};
+                VplBoxDesc bd;
+                memset(&bd, 0, sizeof(bd));
+                bd.structSize = sizeof(bd);
+                bd.patchArtist = 1;
+                bd.showNotches = 1;
+                bd.showMeans = 1;
+                bd.horizontal = 1;
+                bd.labels = names;
+                vplAxesBoxPlotFull(ax, bpv, bpc, 4, &bd);
+                vplAxesSetXLabel(ax, "value");
                 break;
             }
 
@@ -1243,6 +1371,84 @@ static VplResult vplBuildDemo(VplDemoId id, const VplDemoParams *p, VplFigure **
                 break;
             }
 
+            case VplDemo_TriMasked:
+            case VplDemo_TriFaces: {
+                enum { GX = 7, GY = 6, GN = GX * GY };
+                static double gx[GN], gy[GN], gz[GN];
+                for (int i = 0; i < GX; ++i) {
+                    for (int j = 0; j < GY; ++j) {
+                        const double px = i + 0.13 * sin(2.7 * (i + j));
+                        const double py = j + 0.11 * cos(1.9 * (i - j));
+                        gx[i * GY + j] = px;
+                        gy[i * GY + j] = py;
+                        gz[i * GY + j] = sin(0.8 * px) * cos(0.6 * py);
+                    }
+                }
+
+                if (id == VplDemo_TriMasked) {
+                    /* Two triangles per quad; the middle quads masked. */
+                    static int32_t tris[(GX - 1) * (GY - 1) * 6];
+                    static uint8_t mask[(GX - 1) * (GY - 1) * 2];
+                    size_t t = 0;
+                    for (int i = 0; i + 1 < GX; ++i) {
+                        for (int j = 0; j + 1 < GY; ++j) {
+                            const int32_t a = i * GY + j, b = (i + 1) * GY + j;
+                            const int32_t c = (i + 1) * GY + j + 1, d = i * GY + j + 1;
+                            const uint8_t hole = (i >= 2 && i <= 3 && j >= 2 && j <= 2) ? 1 : 0;
+                            const int32_t quad[6] = {a, b, c, a, c, d};
+                            memcpy(&tris[t * 3], quad, sizeof(quad));
+                            mask[t] = hole;
+                            mask[t + 1] = hole;
+                            t += 2;
+                        }
+                    }
+                    VplTriangulation tri;
+                    memset(&tri, 0, sizeof(tri));
+                    tri.structSize = sizeof(tri);
+                    tri.triangles = tris;
+                    tri.triangleCount = t;
+                    tri.mask = mask;
+
+                    VplFieldDesc fd;
+                    memset(&fd, 0, sizeof(fd));
+                    fd.structSize = sizeof(fd);
+                    fd.set = VplFieldField_Extend | VplFieldField_Colormap;
+                    fd.extend = VplContourExtend_Both;
+                    fd.cmap = VplColormap_Plasma;
+                    vplAxesTriContourFFull(ax, gx, gy, gz, GN, &tri, NULL, 6, &fd, NULL);
+                    vplAxesTriplotFull(ax, gx, gy, GN, &tri, "k-");
+                } else {
+                    static int32_t dtris[GN * 6];
+                    static double faces[GN * 2];
+                    size_t nt = 0;
+                    vplTriangulate(gx, gy, GN, dtris, GN * 2, &nt);
+                    /* A value per triangle: the distance of its centroid from
+                       the middle of the grid. */
+                    for (size_t k = 0; k < nt; ++k) {
+                        const int32_t *v = &dtris[k * 3];
+                        const double cx = (gx[v[0]] + gx[v[1]] + gx[v[2]]) / 3.0 - 3.0;
+                        const double cy = (gy[v[0]] + gy[v[1]] + gy[v[2]]) / 3.0 - 2.5;
+                        faces[k] = sqrt(cx * cx + cy * cy);
+                    }
+                    VplFieldDesc pd;
+                    memset(&pd, 0, sizeof(pd));
+                    pd.structSize = sizeof(pd);
+                    pd.set = VplFieldField_Colormap;
+                    pd.cmap = VplColormap_Inferno;
+                    vplAxesTriPcolorFull(ax, gx, gy, GN, NULL, faces, nt, 1, &pd);
+
+                    VplFieldDesc cd;
+                    memset(&cd, 0, sizeof(cd));
+                    cd.structSize = sizeof(cd);
+                    cd.set = VplFieldField_ColorSpec;
+                    cd.colorSpec = "white";
+                    vplAxesTriContourFull(ax, gx, gy, gz, GN, NULL, NULL, 5, &cd, NULL);
+                }
+                vplAxesSetXLabel(ax, "x");
+                vplAxesSetYLabel(ax, "y");
+                break;
+            }
+
             case VplDemo_Hexbin: {
                 /* Clustered on purpose: a uniform spread would colour every
                    hexagon alike and show neither the binning nor the drop. */
@@ -1254,6 +1460,30 @@ static VplResult vplBuildDemo(VplDemoId id, const VplDemoParams *p, VplFigure **
                     hy[i] = 2.0 + sin(t * 1.3) * (0.4 + 0.006 * i);
                 }
                 vplAxesHexbin(ax, hx, hy, HN, 14);
+                vplAxesSetXLabel(ax, "x");
+                vplAxesSetYLabel(ax, "y");
+                break;
+            }
+
+            case VplDemo_HexbinFull: {
+                enum { HN = 400 };
+                static double hx[HN], hy[HN], hc[HN];
+                for (int i = 0; i < HN; ++i) {
+                    const double t = i * 0.37;
+                    hx[i] = 2.0 + cos(t) * (0.4 + 0.006 * i);
+                    hy[i] = 2.0 + sin(t * 1.3) * (0.4 + 0.006 * i);
+                    hc[i] = sin(i * 0.05);
+                }
+                VplHexbinDesc hd;
+                memset(&hd, 0, sizeof(hd));
+                hd.structSize = sizeof(hd);
+                hd.gridsizeX = 14;
+                hd.C = hc;
+                hd.reduce = VplHexReduce_Mean;
+                hd.mincnt = 3;
+                hd.cmap = VplColormap_Magma;
+                hd.marginals = 1;
+                vplAxesHexbinFull(ax, hx, hy, HN, &hd);
                 vplAxesSetXLabel(ax, "x");
                 vplAxesSetYLabel(ax, "y");
                 break;
@@ -1437,6 +1667,50 @@ static VplResult vplBuildDemo(VplDemoId id, const VplDemoParams *p, VplFigure **
                 break;
             }
 
+            case VplDemo_HistFull: {
+                /* The same closed-form sample as the plain histogram, split in
+                   two, plus a weight that favours the later points. */
+                static double lo[120], hi[120], w[120];
+                for (int i = 0; i < 120; ++i) {
+                    const double t = (double)i / 119.0;
+                    lo[i] = 2.0 + 1.4 * sin(t * 9.0);
+                    hi[i] = 6.0 + 1.1 * cos(t * 7.0);
+                    w[i] = 0.5 + t;
+                }
+                static const double edges[] = {0.0, 1.5, 2.5, 3.0, 3.5, 4.5, 5.5, 6.0, 6.5, 8.0};
+                const double *data[2] = {lo, hi};
+                const size_t counts[2] = {120, 120};
+                const double *weights[2] = {NULL, w};
+
+                VplHistDesc hd;
+                memset(&hd, 0, sizeof(hd));
+                hd.structSize = sizeof(hd);
+                hd.binEdges = edges;
+                hd.binEdgeCount = sizeof(edges) / sizeof(edges[0]);
+                hd.histtype = VplHistType_BarStacked;
+                VplPatchDesc styles[2];
+                memset(styles, 0, sizeof(styles));
+                styles[0].structSize = sizeof(styles[0]);
+                styles[0].set = VplPatchField_Label;
+                styles[0].label = "low mode";
+                styles[1].structSize = sizeof(styles[1]);
+                styles[1].set = VplPatchField_Label;
+                styles[1].label = "high mode (weighted)";
+                vplAxesHistFull(ax, data, counts, weights, 2, &hd, styles, NULL, NULL, NULL);
+
+                /* The same stack at finer, equal bins, as an outline drawn at
+                   line zorder over the bars. */
+                hd.histtype = VplHistType_Step;
+                hd.stacked = 1;
+                hd.binEdges = NULL;
+                hd.binEdgeCount = 0;
+                hd.bins = 32;
+                vplAxesHistFull(ax, data, counts, weights, 2, &hd, NULL, NULL, NULL, NULL);
+                vplAxesSetXLabel(ax, "value");
+                vplAxesSetYLabel(ax, "count");
+                break;
+            }
+
             case VplDemo_Ecdf: {
                 static double sample[60];
                 for (int i = 0; i < 60; ++i) {
@@ -1463,6 +1737,32 @@ static VplResult vplBuildDemo(VplDemoId id, const VplDemoParams *p, VplFigure **
                 break;
             }
 
+            case VplDemo_ViolinsFull: {
+                static double lo_v[3 * 40], hi_v[3 * 40];
+                static size_t counts[3] = {40, 40, 40};
+                for (int g = 0; g < 3; ++g) {
+                    for (int i = 0; i < 40; ++i) {
+                        const double t = (double)i / 39.0;
+                        lo_v[g * 40 + i] = 2.0 + (double)g + 1.2 * sin(t * (6.0 + g));
+                        hi_v[g * 40 + i] = 2.5 + (double)g + 0.8 * cos(t * (5.0 + 2 * g));
+                    }
+                }
+                static const double q[6] = {0.25, 0.75, 0.25, 0.75, 0.25, 0.75};
+                static const size_t qc[3] = {2, 2, 2};
+                VplViolinDesc vd;
+                memset(&vd, 0, sizeof(vd));
+                vd.structSize = sizeof(vd);
+                vd.showMedians = 1;
+                vd.quantiles = q;
+                vd.quantileCounts = qc;
+                vd.side = VplViolinSide_Low;
+                vplAxesViolinPlotFull(ax, lo_v, counts, 3, &vd);
+                vd.side = VplViolinSide_High;
+                vplAxesViolinPlotFull(ax, hi_v, counts, 3, &vd);
+                vplAxesSetXLabel(ax, "group");
+                break;
+            }
+
             case VplDemo_BoxStats: {
                 /* The five numbers a box needs, with no sample behind them --
                    which is the whole reason bxp exists next to boxplot. */
@@ -1479,7 +1779,18 @@ static VplResult vplBuildDemo(VplDemoId id, const VplDemoParams *p, VplFigure **
                 }
                 stats[0].fliers = fliers0;
                 stats[0].flierCount = 2;
-                vplAxesBxp(ax, stats, 3);
+                vplAxesBxp(ax, stats, 2);
+                /* The third box alone, at its own position, with a mean line. */
+                static const double pos3[1] = {3.0};
+                static const double mean3[1] = {4.6};
+                VplBoxDesc bd;
+                memset(&bd, 0, sizeof(bd));
+                bd.structSize = sizeof(bd);
+                bd.positions = pos3;
+                bd.showMeans = 1;
+                bd.meanLine = 1;
+                bd.noManageTicks = 1;
+                vplAxesBxpFull(ax, &stats[2], 1, mean3, NULL, NULL, &bd);
                 vplAxesSetYLabel(ax, "value");
                 break;
             }
@@ -1667,6 +1978,29 @@ static VplResult vplBuildDemo(VplDemoId id, const VplDemoParams *p, VplFigure **
                 break;
             }
 
+            case VplDemo_ContourAuto: {
+                enum { kGrid = 41 };
+                static double field[kGrid * kGrid];
+                for (int r = 0; r < kGrid; ++r) {
+                    const double fy = -2.0 + 4.0 * (double)r / (double)(kGrid - 1);
+                    for (int cc = 0; cc < kGrid; ++cc) {
+                        const double fx = -3.0 + 6.0 * (double)cc / (double)(kGrid - 1);
+                        field[r * kGrid + cc] = sin(fx) * cos(fy) + 0.1 * fx;
+                    }
+                }
+                VplFieldDesc fdesc;
+                memset(&fdesc, 0, sizeof(fdesc));
+                fdesc.structSize = sizeof(fdesc);
+                fdesc.set = VplFieldField_Extend;
+                fdesc.extend = VplContourExtend_Both;
+                vplAxesContourF(ax, field, kGrid, kGrid, NULL, 8, &fdesc, NULL);
+                fdesc.set = VplFieldField_ColorSpec | VplFieldField_LineWidth;
+                fdesc.colorSpec = "k";
+                fdesc.lineWidth = 0.6;
+                vplAxesContour(ax, field, kGrid, kGrid, NULL, 0, &fdesc, NULL);
+                break;
+            }
+
             case VplDemo_Matrix: {
                 static double m[24];
                 for (int i = 0; i < 24; ++i) {
@@ -1757,6 +2091,8 @@ static VplResult vplBuildDemo(VplDemoId id, const VplDemoParams *p, VplFigure **
                     v[i] = (j < 0) ? 0.0 : sin((double)j * 0.35) + 0.3 * sin((double)j * 1.1);
                 }
                 vplAxesXCorr(ax, u, v, 128, 24, 1);
+                /* Linearly detrended, as markers on top. */
+                vplAxesXCorrFull(ax, u, v, 128, 24, 1, VplSpectralDetrend_Linear, 0, NULL, NULL);
                 vplAxesSetXLabel(ax, "lag");
                 break;
             }

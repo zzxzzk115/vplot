@@ -148,7 +148,10 @@ inline std::vector<std::pair<int, int>> triangulation_edges(const std::vector<Tr
     for (const Triangle &t : tris) {
         const int e[3][2] = {{t.a, t.b}, {t.b, t.c}, {t.c, t.a}};
         for (const auto &pair : e) {
-            edges.emplace_back(std::min(pair[0], pair[1]), std::max(pair[0], pair[1]));
+            /* matplotlib's Triangulation.edges: each edge from its higher
+               index to its lower, sorted on that pair. The direction is where
+               a dash pattern starts. */
+            edges.emplace_back(std::max(pair[0], pair[1]), std::min(pair[0], pair[1]));
         }
     }
     std::sort(edges.begin(), edges.end());

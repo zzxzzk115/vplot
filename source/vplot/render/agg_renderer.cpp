@@ -45,7 +45,9 @@ void fill_gc(GCAgg &out, const GraphicsContext &gc)
     out.color = to_agg(gc.color, gc.alpha);
     out.cap = to_agg(gc.cap);
     out.join = to_agg(gc.join);
-    out.snap_mode = SNAP_AUTO;
+    out.snap_mode = gc.snap == GraphicsContext::Snap::On    ? SNAP_TRUE
+                    : gc.snap == GraphicsContext::Snap::Off ? SNAP_FALSE
+                                                            : SNAP_AUTO;
 
     /* An all-zero rect means "no clipping" to RendererAgg::set_clipbox. */
     out.cliprect = gc.has_cliprect

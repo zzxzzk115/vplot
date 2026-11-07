@@ -220,6 +220,25 @@ int main(void)
         fprintf(stderr, "FAIL: png does not start with the PNG signature\n");
         ++failures;
     }
+    /* The override re-renders at 200 dpi rather than scaling the 100 dpi
+       raster: the IHDR chunk (bytes 16..23, big-endian) must say 1280 x 960. */
+    {
+        unsigned char head[24] = {0};
+        FILE *png = fopen("test_export@2x.png", "rb");
+        const size_t got = png != NULL ? fread(head, 1, sizeof(head), png) : 0;
+        if (png != NULL) {
+            fclose(png);
+        }
+        const unsigned long pw = ((unsigned long)head[16] << 24) | ((unsigned long)head[17] << 16) |
+                                 ((unsigned long)head[18] << 8) | head[19];
+        const unsigned long ph = ((unsigned long)head[20] << 24) | ((unsigned long)head[21] << 16) |
+                                 ((unsigned long)head[22] << 8) | head[23];
+        if (got != sizeof(head) || pw != 1280 || ph != 960) {
+            fprintf(stderr, "FAIL: the 200dpi png is %lux%lu, want 1280x960\n", pw, ph);
+            ++failures;
+        }
+    }
+
     /* Doubling the dpi quadruples the pixel count, so the file must grow. */
     if (png2x_bytes <= png_bytes) {
         fprintf(stderr, "FAIL: the 200dpi png (%ld) is not larger than the 100dpi one (%ld)\n",

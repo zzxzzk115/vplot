@@ -35,6 +35,7 @@
 #include <span>
 #include <stdexcept>
 #include <string>
+#include <utility>
 #include <vector>
 
 /*
@@ -143,6 +144,118 @@ struct PatchOpts
     std::optional<double> linewidth; /* the edge width; 0 draws no edge */
     std::optional<double> alpha;
     std::optional<std::string> label;
+};
+
+/*
+ * matplotlib's Triangulation(x, y, triangles, mask) for the triangle family:
+ *
+ *     ax.triplot(x, y, {.triangles = {{0, 1, 2}, {1, 3, 2}}}, "go-");
+ *
+ * Empty triangles means the Delaunay triangulation (vplot::triangulate gives
+ * it, to line a mask or per-triangle values up with); an empty mask hides
+ * nothing.
+ */
+struct Triangulation
+{
+    std::vector<std::array<std::int32_t, 3>> triangles;
+    std::vector<std::uint8_t> mask;
+
+    VplTriangulation desc() const
+    {
+        VplTriangulation t{};
+        t.structSize = sizeof(t);
+        if (!triangles.empty()) {
+            t.triangles = triangles.front().data();
+            t.triangleCount = triangles.size();
+            if (!mask.empty()) {
+                if (mask.size() != triangles.size()) {
+                    throw std::invalid_argument("Triangulation: one mask flag per triangle");
+                }
+                t.mask = mask.data();
+            }
+        } else if (!mask.empty()) {
+            throw std::invalid_argument("Triangulation: a mask needs explicit triangles");
+        }
+        return t;
+    }
+};
+
+/*
+ * hist's keyword arguments, for the general overloads of Axes::hist:
+ *
+ *     ax.hist(x, {.bins = 20, .histtype = VplHistType_Step});
+ *     ax.hist({a, b}, {.stacked = true, .density = true});
+ */
+struct HistOpts
+{
+    std::size_t bins = 10;
+    std::vector<double> bin_edges; /* explicit edges; overrides bins */
+    std::optional<std::pair<double, double>> range;
+    bool density = false;
+    int cumulative = 0; /* 0 off, 1 forward, -1 reverse */
+    VplHistType histtype = VplHistType_Bar;
+    VplHistAlign align = VplHistAlign_Mid;
+    bool horizontal = false;
+    std::optional<double> rwidth;
+    bool stacked = false;
+    double bottom = 0.0;
+    bool log = false;
+};
+
+/*
+ * errorbar's keyword arguments, for the general Axes::errorbar overload.
+ * Each error is empty (none), one vector (symmetric) or two (lower, upper):
+ *
+ *     ax.errorbar(x, y, {.yerr = {lo, hi}, .capsize = 3, .errorevery = 2});
+ */
+struct ErrorBarOpts
+{
+    std::vector<std::vector<double>> yerr;
+    std::vector<std::vector<double>> xerr;
+    std::string fmt;               /* "" for the default line, "none" for bars only */
+    std::optional<std::string> ecolor;
+    double elinewidth = 0.0;       /* 0 follows the line width */
+    double capsize = 0.0;
+    double capthick = 0.0;         /* 0 follows the marker edge width */
+    std::size_t errorevery = 1;
+    std::size_t errorevery_offset = 0;
+    bool barsabove = false;
+    VplLineStyle elinestyle = VplLineStyle_Solid;
+    /* Per-point limit flags (lolims=, uplims=, xlolims=, xuplims=); empty
+       for none, otherwise one per point. */
+    std::vector<std::uint8_t> lolims;
+    std::vector<std::uint8_t> uplims;
+    std::vector<std::uint8_t> xlolims;
+    std::vector<std::uint8_t> xuplims;
+};
+
+/* pie's keyword arguments, for the general Axes::pie overload:
+
+       ax.pie(sizes, {.labels = {"a", "b"}, .autopct = "%1.1f%%", .startangle = 90});
+*/
+struct PieOpts
+{
+    std::vector<double> explode;
+    std::vector<std::string> labels;
+    double labeldistance = 1.1;
+    std::optional<std::string> autopct;
+    double pctdistance = 0.6;
+    double startangle = 0.0;
+    double radius = 1.0;
+    bool counterclock = true;
+    bool rotatelabels = false;
+    bool normalize = true;
+    std::pair<double, double> center{0.0, 0.0};
+    bool frame = false;
+    std::vector<std::string> colors;
+    double fontsize = 10.0;
+};
+
+/* What hist returns besides its patches: matplotlib's n and bins. */
+struct HistResult
+{
+    std::vector<double> tops;  /* datasets x bins, dataset-major */
+    std::vector<double> edges; /* bins + 1 */
 };
 
 namespace detail
@@ -296,6 +409,15 @@ class Contour
     VplContour *raw() const noexcept { return m_raw; }
     /* clabel(): label the contour lines in place. */
     void clabel() { detail::check(vplContourClabel(m_raw, nullptr)); }
+    /* cs.levels: the levels drawn, including any chosen automatically. */
+    std::vector<double> levels() const
+    {
+        std::size_t n = 0;
+        detail::check(vplContourGetLevels(m_raw, nullptr, 0, &n));
+        std::vector<double> out(n);
+        detail::check(vplContourGetLevels(m_raw, out.data(), out.size(), &n));
+        return out;
+    }
   private:
     VplContour *m_raw;
 };
@@ -306,6 +428,19 @@ class Contour
  */
 class Axes
 {
+    Contour contourf_impl(detail::Seq values, std::size_t rows, std::size_t cols,
+                          const double *levels, std::size_t count, VplContourExtend extend)
+    {
+        VplFieldDesc d{};
+        d.structSize = sizeof(d);
+        d.set = VplFieldField_Extend;
+        d.extend = extend;
+        VplContour *out = nullptr;
+        detail::check(
+            vplAxesContourF(m_raw, values.data(), rows, cols, levels, count, &d, &out));
+        return Contour(out);
+    }
+
   public:
     explicit Axes(VplAxes *raw) : m_raw(raw) {}
 
@@ -490,6 +625,49 @@ class Axes
                                       &d, &out));
         return Line(out);
     }
+    /* The general form: asymmetric bars in either direction, fmt (including
+       "none"), ecolor, errorevery and barsabove. */
+    Line errorbar(detail::Seq x, detail::Seq y, const ErrorBarOpts &e,
+                  const LineOpts &o = {})
+    {
+        const std::size_t n = std::min(x.size(), y.size());
+        const auto pick = [n](const std::vector<std::vector<double>> &err, std::size_t k) {
+            if (err.size() > 2 || (k < err.size() && err[k].size() < n)) {
+                throw std::invalid_argument(
+                    "errorbar: an error is one or two arrays of one value per point");
+            }
+            return k < err.size() ? err[k].data() : nullptr;
+        };
+        const VplLineDesc d = detail::line_desc(e.fmt.c_str(), o);
+        VplErrorBarDesc eb{};
+        eb.structSize = sizeof(eb);
+        eb.capsize = e.capsize;
+        eb.capthick = e.capthick;
+        eb.elinewidth = e.elinewidth;
+        eb.eColorSpec = e.ecolor ? e.ecolor->c_str() : nullptr;
+        eb.errorEveryOffset = e.errorevery_offset;
+        eb.errorEveryStep = e.errorevery;
+        eb.barsAbove = e.barsabove ? 1 : 0;
+        eb.eLineStyle = e.elinestyle;
+        const auto lims = [n](const std::vector<std::uint8_t> &v) -> const std::uint8_t * {
+            if (v.empty()) {
+                return nullptr;
+            }
+            if (v.size() < n) {
+                throw std::invalid_argument("errorbar: one limit flag per point");
+            }
+            return v.data();
+        };
+        eb.lolims = lims(e.lolims);
+        eb.uplims = lims(e.uplims);
+        eb.xlolims = lims(e.xlolims);
+        eb.xuplims = lims(e.xuplims);
+        VplLine *out = nullptr;
+        detail::check(vplAxesErrorBarFull(m_raw, x.data(), y.data(), n, pick(e.yerr, 0),
+                                          pick(e.yerr, 1), pick(e.xerr, 0), pick(e.xerr, 1),
+                                          &eb, &d, &out));
+        return Line(out);
+    }
     void set_xerr(const Line &line, detail::Seq xerr)
     {
         detail::check(vplAxesSetXErr(m_raw, line.raw(), xerr.data(), xerr.size()));
@@ -543,6 +721,82 @@ class Axes
         detail::check(vplAxesHist(m_raw, x.data(), x.size(), bins, density ? 1 : 0, &d, &out));
         return Patch(out);
     }
+    /* Several datasets on shared bins -- hist([a, b, c], ...). `styles` and
+       `weights` are empty or hold one entry per dataset (an empty weight
+       vector means unweighted). */
+    std::vector<Patch> hist(const std::vector<std::vector<double>> &datasets,
+                            const HistOpts &h, const std::vector<PatchOpts> &styles = {},
+                            const std::vector<std::vector<double>> &weights = {},
+                            HistResult *result = nullptr)
+    {
+        std::vector<const double *> data;
+        std::vector<std::size_t> counts;
+        for (const std::vector<double> &d : datasets) {
+            data.push_back(d.data());
+            counts.push_back(d.size());
+        }
+        std::vector<const double *> w;
+        for (const std::vector<double> &wi : weights) {
+            w.push_back(wi.empty() ? nullptr : wi.data());
+        }
+        std::vector<VplPatchDesc> descs;
+        for (const PatchOpts &s : styles) {
+            descs.push_back(detail::patch_desc(s));
+        }
+        if ((!weights.empty() && weights.size() != datasets.size()) ||
+            (!styles.empty() && styles.size() != datasets.size())) {
+            throw std::invalid_argument("hist: weights and styles need one entry per dataset");
+        }
+
+        VplHistDesc d{};
+        d.structSize = sizeof(d);
+        d.bins = h.bins;
+        d.binEdges = h.bin_edges.empty() ? nullptr : h.bin_edges.data();
+        d.binEdgeCount = h.bin_edges.size();
+        if (h.range) {
+            d.hasRange = 1;
+            d.rangeMin = h.range->first;
+            d.rangeMax = h.range->second;
+        }
+        d.density = h.density ? 1 : 0;
+        d.cumulative = h.cumulative;
+        d.histtype = h.histtype;
+        d.align = h.align;
+        d.horizontal = h.horizontal ? 1 : 0;
+        d.rwidth = h.rwidth.value_or(0.0);
+        d.stacked = h.stacked ? 1 : 0;
+        d.bottom = h.bottom;
+        d.log = h.log ? 1 : 0;
+
+        const std::size_t nbins =
+            h.bin_edges.empty() ? (h.bins == 0 ? 10 : h.bins) : h.bin_edges.size() - 1;
+        std::vector<VplPatch *> out(datasets.size(), nullptr);
+        if (result != nullptr) {
+            result->tops.assign(datasets.size() * nbins, 0.0);
+            result->edges.assign(nbins + 1, 0.0);
+        }
+        detail::check(vplAxesHistFull(m_raw, data.data(), counts.data(),
+                                      w.empty() ? nullptr : w.data(), datasets.size(), &d,
+                                      descs.empty() ? nullptr : descs.data(),
+                                      result ? result->tops.data() : nullptr,
+                                      result ? result->edges.data() : nullptr, out.data()));
+        std::vector<Patch> patches;
+        for (VplPatch *p : out) {
+            patches.emplace_back(p);
+        }
+        return patches;
+    }
+    /* One dataset with the full set of options. */
+    Patch hist(detail::Seq x, const HistOpts &h, const PatchOpts &o = {},
+               detail::Seq weights = {}, HistResult *result = nullptr)
+    {
+        std::vector<std::vector<double>> w;
+        if (!weights.empty()) {
+            w.emplace_back(weights.data(), weights.data() + weights.size());
+        }
+        return hist({std::vector<double>(x.data(), x.data() + x.size())}, h, {o}, w, result)
+            .front();
+    }
     void hist2d(detail::Seq x, detail::Seq y, std::size_t xbins = 10, std::size_t ybins = 10)
     {
         detail::check(vplAxesHist2D(m_raw, x.data(), y.data(),
@@ -552,11 +806,73 @@ class Axes
     {
         detail::check(vplAxesBoxPlot(m_raw, values.data(), counts.data(), counts.size()));
     }
+    /* boxplot(data, positions=..., notch=..., showmeans=..., ...) through a
+       filled-in VplBoxDesc. */
+    void boxplot(const std::vector<std::vector<double>> &dataset, VplBoxDesc desc)
+    {
+        std::vector<double> flat;
+        std::vector<std::size_t> counts;
+        for (const std::vector<double> &d : dataset) {
+            flat.insert(flat.end(), d.begin(), d.end());
+            counts.push_back(d.size());
+        }
+        desc.structSize = sizeof(desc);
+        detail::check(
+            vplAxesBoxPlotFull(m_raw, flat.data(), counts.data(), counts.size(), &desc));
+    }
+    /* violinplot(dataset, positions=..., showmedians=..., ...) through a
+       filled-in VplViolinDesc. */
+    void violinplot(const std::vector<std::vector<double>> &dataset, VplViolinDesc desc)
+    {
+        std::vector<double> flat;
+        std::vector<std::size_t> counts;
+        for (const std::vector<double> &d : dataset) {
+            flat.insert(flat.end(), d.begin(), d.end());
+            counts.push_back(d.size());
+        }
+        desc.structSize = sizeof(desc);
+        detail::check(vplAxesViolinPlotFull(m_raw, flat.data(), counts.data(), counts.size(),
+                                            &desc));
+    }
     void violinplot(detail::Seq values, const std::vector<std::size_t> &counts)
     {
         detail::check(vplAxesViolinPlot(m_raw, values.data(), counts.data(), counts.size()));
     }
     void pie(detail::Seq x) { detail::check(vplAxesPie(m_raw, x.data(), x.size())); }
+    void pie(detail::Seq x, const PieOpts &o)
+    {
+        if ((!o.explode.empty() && o.explode.size() != x.size()) ||
+            (!o.labels.empty() && o.labels.size() != x.size())) {
+            throw std::invalid_argument("pie: explode and labels need one entry per wedge");
+        }
+        std::vector<const char *> labels;
+        for (const std::string &s : o.labels) {
+            labels.push_back(s.c_str());
+        }
+        std::vector<const char *> colors;
+        for (const std::string &s : o.colors) {
+            colors.push_back(s.c_str());
+        }
+        VplPieDesc d{};
+        d.structSize = sizeof(d);
+        d.explode = o.explode.empty() ? nullptr : o.explode.data();
+        d.labels = labels.empty() ? nullptr : labels.data();
+        d.labelDistance = o.labeldistance;
+        d.autopct = o.autopct ? o.autopct->c_str() : nullptr;
+        d.pctDistance = o.pctdistance;
+        d.startAngle = o.startangle;
+        d.radius = o.radius;
+        d.clockwise = o.counterclock ? 0 : 1;
+        d.rotateLabels = o.rotatelabels ? 1 : 0;
+        d.noNormalize = o.normalize ? 0 : 1;
+        d.centerX = o.center.first;
+        d.centerY = o.center.second;
+        d.frame = o.frame ? 1 : 0;
+        d.colorSpecs = colors.empty() ? nullptr : colors.data();
+        d.colorCount = colors.size();
+        d.fontSize = o.fontsize;
+        detail::check(vplAxesPieFull(m_raw, x.data(), x.size(), &d));
+    }
 
     // ---- regions, spans and rules ---------------------------------------
     void fill(detail::Seq x, detail::Seq y, const PatchOpts &o = {})
@@ -676,6 +992,37 @@ class Axes
                                       levels.size(), nullptr, &out));
         return Contour(out);
     }
+    /* contour(Z, n): n automatic levels (matplotlib's default is 7). */
+    Contour contour(detail::Seq values, std::size_t rows, std::size_t cols, int n = 7)
+    {
+        VplContour *out = nullptr;
+        detail::check(vplAxesContour(m_raw, values.data(), rows, cols, nullptr,
+                                     static_cast<std::size_t>(n), nullptr, &out));
+        return Contour(out);
+    }
+    /* contourf(Z, n, extend=...) and contourf(Z, levels, extend=...). */
+    Contour contourf(detail::Seq values, std::size_t rows, std::size_t cols, int n,
+                     VplContourExtend extend = VplContourExtend_Neither)
+    {
+        return contourf_impl(values, rows, cols, nullptr, static_cast<std::size_t>(n), extend);
+    }
+    Contour contourf(detail::Seq values, std::size_t rows, std::size_t cols,
+                     detail::Seq levels, VplContourExtend extend)
+    {
+        return contourf_impl(values, rows, cols, levels.data(), levels.size(), extend);
+    }
+    /* hexbin(x, y, C=..., gridsize=..., mincnt=..., bins="log", ...) through a
+       filled-in VplHexbinDesc; C must match x and y in length. */
+    void hexbin(detail::Seq x, detail::Seq y, VplHexbinDesc desc, detail::Seq C = {})
+    {
+        if (!C.empty() && C.size() < std::min(x.size(), y.size())) {
+            throw std::invalid_argument("hexbin: C needs one value per point");
+        }
+        desc.structSize = sizeof(desc);
+        desc.C = C.empty() ? nullptr : C.data();
+        detail::check(vplAxesHexbinFull(m_raw, x.data(), y.data(), std::min(x.size(), y.size()),
+                                        &desc));
+    }
     void hexbin(detail::Seq x, detail::Seq y, std::size_t gridsize = 30)
     {
         detail::check(vplAxesHexbin(m_raw, x.data(), y.data(), std::min(x.size(), y.size()),
@@ -688,6 +1035,21 @@ class Axes
         const std::size_t n = std::min({x.size(), y.size(), u.size(), v.size()});
         detail::check(vplAxesQuiver(m_raw, x.data(), y.data(), u.data(), v.data(), n,
                                     nullptr));
+    }
+    /* quiver(X, Y, U, V, C, cmap=...): each arrow coloured by its C value. */
+    void quiver(detail::Seq x, detail::Seq y, detail::Seq u, detail::Seq v, detail::Seq c,
+                VplColormap cmap = VplColormap_Viridis)
+    {
+        const std::size_t n = std::min({x.size(), y.size(), u.size(), v.size()});
+        if (c.size() < n) {
+            throw std::invalid_argument("quiver: C needs one value per arrow");
+        }
+        VplQuiverDesc d{};
+        d.structSize = sizeof(d);
+        d.set = VplQuiverField_C;
+        d.C = c.data();
+        d.cmap = cmap;
+        detail::check(vplAxesQuiver(m_raw, x.data(), y.data(), u.data(), v.data(), n, &d));
     }
     void barbs(detail::Seq x, detail::Seq y, detail::Seq u, detail::Seq v)
     {
@@ -727,6 +1089,61 @@ class Axes
     {
         const std::size_t n = std::min({x.size(), y.size(), z.size()});
         detail::check(vplAxesTriPcolor(m_raw, x.data(), y.data(), z.data(), n));
+    }
+
+    /* The same four over a given triangulation (triangles=, mask=). */
+    void triplot(detail::Seq x, detail::Seq y, const Triangulation &tri,
+                 const std::string &fmt = "")
+    {
+        const VplTriangulation t = tri.desc();
+        detail::check(vplAxesTriplotFull(m_raw, x.data(), y.data(),
+                                         std::min(x.size(), y.size()), &t, fmt.c_str()));
+    }
+    /* tricontour(x, y, z, triangles=, levels): empty `levels` picks n of them
+       automatically, as contour(Z, N). */
+    Contour tricontour(detail::Seq x, detail::Seq y, detail::Seq z, const Triangulation &tri,
+                       detail::Seq levels = {}, std::size_t n = 0,
+                       const VplFieldDesc *desc = nullptr)
+    {
+        const std::size_t count = std::min({x.size(), y.size(), z.size()});
+        const VplTriangulation t = tri.desc();
+        VplContour *out = nullptr;
+        detail::check(vplAxesTriContourFull(m_raw, x.data(), y.data(), z.data(), count, &t,
+                                            levels.size() == 0 ? nullptr : levels.data(),
+                                            levels.size() == 0 ? n : levels.size(), desc,
+                                            &out));
+        return Contour(out);
+    }
+    Contour tricontourf(detail::Seq x, detail::Seq y, detail::Seq z, const Triangulation &tri,
+                        detail::Seq levels = {}, std::size_t n = 0,
+                        VplContourExtend extend = VplContourExtend_Neither)
+    {
+        const std::size_t count = std::min({x.size(), y.size(), z.size()});
+        const VplTriangulation t = tri.desc();
+        VplFieldDesc d{};
+        d.structSize = sizeof(d);
+        d.set = VplFieldField_Extend;
+        d.extend = extend;
+        VplContour *out = nullptr;
+        detail::check(vplAxesTriContourFFull(m_raw, x.data(), y.data(), z.data(), count, &t,
+                                             levels.size() == 0 ? nullptr : levels.data(),
+                                             levels.size() == 0 ? n : levels.size(), &d,
+                                             &out));
+        return Contour(out);
+    }
+    /* tripcolor(x, y, c, triangles=, cmap=): `c` per point or per triangle;
+       facecolors = true forces the per-triangle reading. */
+    void tripcolor(detail::Seq x, detail::Seq y, detail::Seq c, const Triangulation &tri,
+                   VplColormap cmap = VplColormap_Viridis, bool facecolors = false)
+    {
+        const VplTriangulation t = tri.desc();
+        VplFieldDesc d{};
+        d.structSize = sizeof(d);
+        d.set = VplFieldField_Colormap;
+        d.cmap = cmap;
+        detail::check(vplAxesTriPcolorFull(m_raw, x.data(), y.data(),
+                                           std::min(x.size(), y.size()), &t, c.data(),
+                                           c.size(), facecolors ? 1 : 0, &d));
     }
 
     // ---- spectral -------------------------------------------------------
@@ -778,6 +1195,28 @@ class Axes
     void acorr(detail::Seq x, int maxlags = 10, bool normed = true)
     {
         detail::check(vplAxesACorr(m_raw, x.data(), x.size(), maxlags, normed ? 1 : 0));
+    }
+    /* xcorr(x, y, detrend=..., usevlines=...): maxlags 0 is None. Returns the
+       marker line when usevlines is false, an empty handle otherwise. */
+    Line xcorr(detail::Seq x, detail::Seq y, int maxlags, bool normed, VplSpectralDetrend detrend,
+               bool usevlines = true, const LineOpts &o = {})
+    {
+        const VplLineDesc d = detail::line_desc(nullptr, o);
+        VplLine *out = nullptr;
+        detail::check(vplAxesXCorrFull(m_raw, x.data(), y.data(), std::min(x.size(), y.size()),
+                                       maxlags, normed ? 1 : 0, detrend, usevlines ? 1 : 0,
+                                       usevlines ? nullptr : &d, &out));
+        return Line(out);
+    }
+    Line acorr(detail::Seq x, int maxlags, bool normed, VplSpectralDetrend detrend,
+               bool usevlines = true, const LineOpts &o = {})
+    {
+        const VplLineDesc d = detail::line_desc(nullptr, o);
+        VplLine *out = nullptr;
+        detail::check(vplAxesACorrFull(m_raw, x.data(), x.size(), maxlags, normed ? 1 : 0,
+                                       detrend, usevlines ? 1 : 0, usevlines ? nullptr : &d,
+                                       &out));
+        return Line(out);
     }
 
     // ---- scales, ticks, spines, and the rest of the furniture -----------
@@ -836,6 +1275,10 @@ class Axes
     }
     void set_box_aspect(double a) { detail::check(vplAxesSetBoxAspect(m_raw, a)); }
     void set_anchor(double x, double y) { detail::check(vplAxesSetAnchor(m_raw, x, y)); }
+    void set_anchor(const std::string &code)  // ax.set_anchor("SW")
+    {
+        detail::check(vplAxesSetAnchorCode(m_raw, code.c_str()));
+    }
     void margins(double x, double y) { detail::check(vplAxesSetMargins(m_raw, x, y)); }
     void set_xmargin(double m) { detail::check(vplAxesSetXMargin(m_raw, m)); }
     void set_ymargin(double m) { detail::check(vplAxesSetYMargin(m_raw, m)); }
@@ -944,6 +1387,17 @@ class Axes
     {
         detail::check(vplAxesBxp(m_raw, stats.data(), stats.size()));
     }
+    /* bxp with options; `means` and `ci_lo`/`ci_hi` are empty or one per box. */
+    void bxp(const std::vector<VplBoxStats> &stats, VplBoxDesc desc,
+             const std::vector<double> &means = {}, const std::vector<double> &ci_lo = {},
+             const std::vector<double> &ci_hi = {})
+    {
+        desc.structSize = sizeof(desc);
+        detail::check(vplAxesBxpFull(m_raw, stats.data(), stats.size(),
+                                     means.empty() ? nullptr : means.data(),
+                                     ci_lo.empty() ? nullptr : ci_lo.data(),
+                                     ci_hi.empty() ? nullptr : ci_hi.data(), &desc));
+    }
 
     /* Bars grouped by category -- grouped_bar. `heights` is datasetCount rows of
        groupCount values, row-major. */
@@ -965,6 +1419,13 @@ class Axes
     {
         detail::check(vplAxesPieLabel(m_raw, labels.data(), labels.size(), distance,
                                       font_size));
+    }
+    /* pie_label with alignment= and rotate=. */
+    void pie_label(const std::vector<const char *> &labels, double distance, double font_size,
+                   VplPieLabelAlign alignment, bool rotate = false)
+    {
+        detail::check(vplAxesPieLabelFull(m_raw, labels.data(), labels.size(), distance,
+                                          font_size, alignment, rotate ? 1 : 0));
     }
 
     /* A reference arrow and caption for the last quiver() -- quiverkey. */
@@ -1231,6 +1692,20 @@ class Figure
 
     VplFigure *m_raw = nullptr;
 };
+
+/* The Delaunay triangulation vplot computes for the triangle family, as
+   point-index triplets in vplot's own order. */
+inline std::vector<std::array<std::int32_t, 3>> triangulate(detail::Seq x, detail::Seq y)
+{
+    const std::size_t n = std::min(x.size(), y.size());
+    std::size_t count = 0;
+    detail::check(vplTriangulate(x.data(), y.data(), n, nullptr, 0, &count));
+    std::vector<std::array<std::int32_t, 3>> out(count);
+    if (count != 0) {
+        detail::check(vplTriangulate(x.data(), y.data(), n, out.front().data(), count, &count));
+    }
+    return out;
+}
 
 /* Point the library at its font file, the same as vplSetFontPath. Call once
    before creating a figure if the bundled font is not beside the executable. */

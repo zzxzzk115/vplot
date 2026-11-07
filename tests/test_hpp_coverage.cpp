@@ -52,6 +52,7 @@ const Exemption kNotWrapped[] = {
     {"vplAxesGetAspect", "getter"},
     {"vplAxesGetBoxAspect", "getter"},
     {"vplAxesGetAnchor", "getter"},
+    {"vplAxesGetAnchorCode", "getter"},
     {"vplAxesGetMargins", "getter"},
     {"vplAxesGetXMargin", "getter"},
     {"vplAxesGetYMargin", "getter"},

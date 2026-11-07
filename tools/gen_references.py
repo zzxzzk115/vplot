@@ -6,7 +6,8 @@ differential harness compares against. Run it anywhere matplotlib is installed
 and commit the output under tests/references/.
 
     pip install matplotlib==3.11.1
-    python tools/gen_references.py
+    python tools/gen_references.py                # every case
+    python tools/gen_references.py hist pie       # just these
 
 The matplotlib version matters. These references are byte-exact expectations,
 and matplotlib changes its output between releases, which moves every RMS in the
@@ -1919,6 +1920,397 @@ def case_hist_density():
     save(fig, "hist_density")
 
 
+def case_quiver_colors():
+    """quiver's per-arrow colour: C through magma (normalised over C), and an
+    explicit colour per arrow with pivot='middle'."""
+    import math
+
+    g = 6
+    xs, ys, us, vs, cs = [], [], [], [], []
+    for i in range(g):
+        for j in range(g):
+            x = -2.0 + 4.0 * j / (g - 1)
+            y = -2.0 + 4.0 * i / (g - 1)
+            xs.append(x)
+            ys.append(y)
+            us.append(-y * 0.5)
+            vs.append(x * 0.5)
+            cs.append(math.hypot(x, y))
+    palette = ["tab:red", "tab:green", "tab:blue"]
+    colors = [palette[k % 3] for k in range(len(xs))]
+
+    fig = plt.figure(figsize=(6.4, 4.8), dpi=100)
+    ax1 = fig.add_subplot(1, 2, 1)
+    ax1.quiver(xs, ys, us, vs, cs, cmap="magma")
+    ax2 = fig.add_subplot(1, 2, 2)
+    ax2.quiver(xs, ys, us, vs, color=colors, pivot="middle")
+    save(fig, "quiver_colors")
+
+
+def _tri_grid():
+    """A 6 x 5 perturbed lattice triangulated by hand -- two triangles per
+    quad -- with the two quads at i = 2, j = 1..2 masked out as a hole."""
+    import math
+
+    xs, ys, zs = [], [], []
+    for i in range(6):
+        for j in range(5):
+            px = i + 0.13 * math.sin(2.7 * (i + j))
+            py = j + 0.11 * math.cos(1.9 * (i - j))
+            xs.append(px)
+            ys.append(py)
+            zs.append(math.sin(0.8 * px) * math.cos(0.6 * py))
+    tris, mask = [], []
+    for i in range(5):
+        for j in range(4):
+            a, b, c, d = i * 5 + j, (i + 1) * 5 + j, (i + 1) * 5 + j + 1, i * 5 + j + 1
+            hole = i == 2 and j in (1, 2)
+            tris += [[a, b, c], [a, c, d]]
+            mask += [hole, hole]
+    return xs, ys, zs, tris, mask
+
+
+def case_tri_explicit():
+    """The triangle family over explicit triangles with a mask: triplot with a
+    colourless 'o--' (edges C0, nodes C1), automatic tricontour levels,
+    tricontourf with extend='both', and tripcolor from per-triangle values."""
+    import math
+
+    import numpy as np
+    from matplotlib.tri import Triangulation
+
+    xs, ys, zs, tris, mask = _tri_grid()
+    fc = [math.sin(0.7 * t) for t in range(len(tris))]
+    tri = Triangulation(xs, ys, tris, mask=mask)
+
+    fig = plt.figure(figsize=(6.4, 4.8), dpi=100)
+    ax1 = fig.add_subplot(2, 2, 1)
+    ax1.triplot(xs, ys, tris, "o--", mask=mask)
+    ax2 = fig.add_subplot(2, 2, 2)
+    ax2.tricontour(tri, zs, 6)
+    ax3 = fig.add_subplot(2, 2, 3)
+    ax3.tricontourf(tri, zs, levels=[-0.4, -0.1, 0.2, 0.5], extend="both",
+                    cmap="plasma")
+    ax4 = fig.add_subplot(2, 2, 4)
+    ax4.tripcolor(tri, facecolors=np.asarray(fc), cmap="magma")
+    save(fig, "tri_explicit")
+
+
+def case_contour_over_mesh():
+    """Line contours sit in the line tier (zorder 2), above a tripcolor mesh
+    (zorder 1) drawn after them: white iso-lines over the colours."""
+    from matplotlib.tri import Triangulation
+
+    xs, ys, zs, tris, mask = _tri_grid()
+    tri = Triangulation(xs, ys, tris)  # explicit, unmasked: no Qhull ambiguity
+
+    fig = plt.figure(figsize=(6.4, 4.8), dpi=100)
+    ax = fig.add_subplot(1, 1, 1)
+    ax.tricontour(tri, zs, levels=[-0.4, -0.1, 0.2, 0.5], colors="white")
+    ax.tripcolor(tri, zs)
+    save(fig, "contour_over_mesh")
+
+
+def case_errorbar_limits():
+    """errorbar's limit carets: lolims/uplims (one, the other, and both) with
+    capsize=3 and dashed bars, then xlolims/xuplims with no caps, where the
+    carets fall back to lines.markersize."""
+    x = [0, 1, 2, 3, 4, 5]
+    y = [1.0, 1.8, 1.4, 2.2, 2.0, 2.6]
+    lo = [True, False, True, False, False, True]
+    up = [False, True, True, False, False, False]
+
+    fig = plt.figure(figsize=(6.4, 4.8), dpi=100)
+    ax1 = fig.add_subplot(2, 1, 1)
+    ax1.errorbar(x, y, yerr=0.4, lolims=lo, uplims=up, capsize=3, fmt="o",
+                 elinestyle="--")
+    ax2 = fig.add_subplot(2, 1, 2)
+    ax2.errorbar(x, y, xerr=0.3, xlolims=up, xuplims=[False, False, False, True, True, False],
+                 fmt="s-", ecolor="tab:red")
+    save(fig, "errorbar_limits")
+
+
+def _box_datasets():
+    import math
+
+    a = [math.sin(i * 0.7) * 2.0 + math.cos(i * 0.13) for i in range(60)] + [6.5, -5.0]
+    b = [math.cos(i * 0.31) ** 3 * 3.0 + 1.0 for i in range(45)]
+    c = [0.5 * math.sin(i * 1.9) + 0.03 * i for i in range(70)] + [4.0]
+    return a, b, c
+
+
+def case_boxplot_full():
+    """boxplot's keyword arguments.
+
+    Top left: custom positions and widths, notches and mean markers. Top right:
+    patch_artist boxes laid horizontally, with tick labels. Bottom left: mean
+    lines, whiskers at the 5th/95th percentiles, no caps. Bottom right: whis=0.5
+    without fliers and with manage_ticks=False.
+    """
+    a, b, c = _box_datasets()
+    fig = plt.figure(figsize=(6.4, 4.8), dpi=100)
+    ax1 = fig.add_subplot(2, 2, 1)
+    ax1.boxplot([a, b, c], positions=[0.5, 2.0, 3.0], widths=[0.3, 0.6, 0.4],
+                notch=True, showmeans=True)
+    ax2 = fig.add_subplot(2, 2, 2)
+    ax2.boxplot([a, b, c], orientation="horizontal", patch_artist=True,
+                tick_labels=["alpha", "beta", "gamma"])
+    ax3 = fig.add_subplot(2, 2, 3)
+    ax3.boxplot([a, b, c], showmeans=True, meanline=True, whis=(5, 95), showcaps=False)
+    ax4 = fig.add_subplot(2, 2, 4)
+    ax4.boxplot([a, b, c], whis=0.5, showfliers=False, manage_ticks=False)
+    save(fig, "boxplot_full")
+
+
+def case_xcorr_full():
+    """xcorr/acorr's detrend and line form: a trending series autocorrelated
+    with detrend_linear as markers, and a cross-correlation with detrend_mean
+    as stalks over every lag (maxlags=None)."""
+    import math
+    from matplotlib import mlab
+
+    a = [0.05 * i + math.sin(i * 0.6) for i in range(60)]
+    b = [2.0 + math.cos(i * 0.6 + 0.4) for i in range(60)]
+    fig = plt.figure(figsize=(6.4, 4.8), dpi=100)
+    ax1 = fig.add_subplot(2, 1, 1)
+    ax1.acorr(a, detrend=mlab.detrend_linear, usevlines=False, maxlags=20)
+    ax2 = fig.add_subplot(2, 1, 2)
+    ax2.xcorr(a[:30], b[:30], detrend=mlab.detrend_mean, maxlags=None)
+    save(fig, "xcorr_full")
+
+
+def case_violin_full():
+    """violinplot's keyword arguments.
+
+    Left: custom positions and widths, means, medians and quantiles, with
+    Silverman's bandwidth. Right: horizontal, one-sided (side='high'), a
+    fixed bandwidth factor, 40 points and explicit face and line colours.
+    """
+    import math
+
+    a = [math.sin(i * 0.7) * 2.0 + math.cos(i * 0.13) for i in range(120)]
+    b = [math.cos(i * 0.31) ** 3 * 3.0 + 1.0 for i in range(90)]
+    c = [0.5 * math.sin(i * 1.9) + 0.02 * i for i in range(150)]
+
+    fig = plt.figure(figsize=(6.4, 4.8), dpi=100)
+    ax1 = fig.add_subplot(1, 2, 1)
+    ax1.violinplot([a, b, c], positions=[0.5, 2.0, 3.0], widths=[0.4, 0.9, 0.6],
+                   showmeans=True, showmedians=True,
+                   quantiles=[[0.25, 0.75], [], [0.1, 0.5, 0.9]], bw_method="silverman")
+    ax2 = fig.add_subplot(1, 2, 2)
+    ax2.violinplot([a, c], orientation="horizontal", side="high", bw_method=0.3,
+                   points=40, facecolor="tab:green", linecolor="k", showextrema=True)
+    save(fig, "violin_full")
+
+
+def case_hexbin_full():
+    """hexbin's keyword arguments.
+
+    Top left: C reduced by its mean, with mincnt=2 hiding sparse hexagons.
+    Top right: bins='log' in magma, where empty hexagons are left blank.
+    Bottom left: C summed over a fixed extent with gridsize=(12, 5), in gray.
+    Bottom right: bins=4 with fixed vmin/vmax.
+    """
+    import math
+    import numpy as np
+
+    xs, ys, cs = [], [], []
+    for i in range(400):
+        t = i * 0.37
+        r = 0.2 + 0.004 * i
+        xs.append(2.0 + math.cos(t) * r * 3.0)
+        ys.append(2.0 + math.sin(t * 1.3) * r * 2.0)
+        cs.append(math.sin(i * 0.11))
+
+    fig = plt.figure(figsize=(6.4, 4.8), dpi=100)
+    ax1 = fig.add_subplot(2, 2, 1)
+    ax1.hexbin(xs, ys, C=cs, gridsize=15, mincnt=2)
+    ax2 = fig.add_subplot(2, 2, 2)
+    ax2.hexbin(xs, ys, gridsize=20, bins="log", cmap="magma")
+    ax3 = fig.add_subplot(2, 2, 3)
+    ax3.hexbin(xs, ys, C=cs, reduce_C_function=np.sum, gridsize=(12, 5),
+               extent=(0.0, 4.0, 0.0, 4.0), cmap="gray")
+    ax4 = fig.add_subplot(2, 2, 4)
+    ax4.hexbin(xs, ys, gridsize=10, bins=4, vmin=0, vmax=3)
+    save(fig, "hexbin_full")
+
+
+def case_hexbin_log_marginals():
+    """hexbin with xscale='log' (and bins='log'), then marginals=True with C
+    summed: hexagons regular in log space, and the bar strips along the
+    bottom and left edges."""
+    import math
+    import numpy as np
+
+    xs, ys, cs = [], [], []
+    for i in range(400):
+        t = i * 0.37
+        r = 0.2 + 0.004 * i
+        xs.append(2.0 + math.cos(t) * r * 3.0)
+        ys.append(2.0 + math.sin(t * 1.3) * r * 2.0)
+        cs.append(math.sin(i * 0.11))
+    lx = [10.0 ** (0.5 * v) for v in xs]
+
+    fig = plt.figure(figsize=(6.4, 4.8), dpi=100)
+    ax1 = fig.add_subplot(1, 2, 1)
+    ax1.hexbin(lx, ys, gridsize=12, xscale="log", bins="log", cmap="magma")
+    ax2 = fig.add_subplot(1, 2, 2)
+    ax2.hexbin(xs, ys, C=cs, reduce_C_function=np.sum, gridsize=10, marginals=True)
+    save(fig, "hexbin_log_marginals")
+
+
+def _contour_field():
+    """A 30 x 40 closed-form field spanning about -1.4 .. 1.6, off-centre."""
+    import math
+
+    rows, cols = 30, 40
+    z = [[math.sin(c * 0.15) * math.cos(r * 0.2) + 0.6 * math.exp(-((c - 25) ** 2 + (r - 10) ** 2) / 60.0)
+          for c in range(cols)] for r in range(rows)]
+    return z
+
+
+def case_contour_auto():
+    """Automatic levels: contour(Z) at the default N=7, contourf(Z, 5), and
+    contourf with extend='both' and 'min' over explicit levels inside the data
+    range, so the open-ended bands are visible."""
+    z = _contour_field()
+    fig = plt.figure(figsize=(6.4, 4.8), dpi=100)
+    ax1 = fig.add_subplot(2, 2, 1)
+    ax1.contour(z)
+    ax2 = fig.add_subplot(2, 2, 2)
+    ax2.contourf(z, 5)
+    ax3 = fig.add_subplot(2, 2, 3)
+    ax3.contourf(z, [-0.5, 0.0, 0.5, 1.0], extend="both")
+    ax4 = fig.add_subplot(2, 2, 4)
+    ax4.contourf(z, 6, extend="min", cmap="magma")
+    save(fig, "contour_auto")
+
+
+def case_pie_full():
+    """pie's keyword arguments.
+
+    Left: outer labels, percentages, one wedge exploded, starting at 12
+    o'clock. Right: clockwise and unnormalised (the values leave a gap), a
+    smaller radius, an explicit colour list, and labels rotated along their
+    wedges.
+    """
+    fig = plt.figure(figsize=(6.4, 4.8), dpi=100)
+    ax1 = fig.add_subplot(1, 2, 1)
+    ax1.pie([15, 30, 45, 10], labels=["frogs", "hogs", "dogs", "logs"],
+            autopct="%1.1f%%", explode=(0, 0.1, 0, 0), startangle=90)
+    ax2 = fig.add_subplot(1, 2, 2)
+    ax2.pie([0.3, 0.25, 0.25], labels=["a", "bb", "ccc"], counterclock=False,
+            normalize=False, radius=0.9, colors=["tab:red", "0.6", "#2ca02c"],
+            rotatelabels=True, labeldistance=1.05, autopct="%.0f", pctdistance=0.7)
+    save(fig, "pie_full")
+
+
+def _errorbar_data():
+    """Shared by the errorbar option panels: 12 points with asymmetric extents."""
+    import math
+
+    x = [i * 0.5 for i in range(12)]
+    y = [math.sin(v) + 2.0 for v in x]
+    lower = [0.1 + 0.05 * i for i in range(12)]
+    upper = [0.3 * abs(math.cos(i)) for i in range(12)]
+    return x, y, lower, upper
+
+
+def case_errorbar_full():
+    """errorbar's keyword arguments.
+
+    Top left: asymmetric yerr with a different ecolor, elinewidth and capthick.
+    Top right: asymmetric xerr plus symmetric yerr on every third point from
+    the second (errorevery=(1, 3)), with a format string. Bottom left:
+    fmt='none', bars only, which fall back to C0. Bottom right: barsabove, so
+    the black bars cross over the thick data line.
+    """
+    x, y, lower, upper = _errorbar_data()
+    sym = [0.15] * len(x)
+
+    fig = plt.figure(figsize=(6.4, 4.8), dpi=100)
+    ax1 = fig.add_subplot(2, 2, 1)
+    ax1.errorbar(x, y, yerr=[lower, upper], fmt="o", ecolor="tab:red",
+                 elinewidth=1.0, capsize=4, capthick=2)
+    ax2 = fig.add_subplot(2, 2, 2)
+    ax2.errorbar(x, y, yerr=sym, xerr=[upper, lower], fmt="s--",
+                 errorevery=(1, 3), capsize=3)
+    ax3 = fig.add_subplot(2, 2, 3)
+    ax3.plot(x, [v - 1.0 for v in y])
+    ax3.errorbar(x, y, yerr=[lower, upper], fmt="none", errorevery=2, capsize=2)
+    ax4 = fig.add_subplot(2, 2, 4)
+    ax4.errorbar(x, y, yerr=[lower, upper], fmt="o-", ecolor="k", linewidth=3,
+                 barsabove=True)
+    save(fig, "errorbar_full")
+
+
+def _hist_datasets():
+    """Three closed-form datasets shared by the hist option cases."""
+    import math
+
+    a = [math.sin(i * 1.7) + math.sin(i * 0.31) for i in range(300)]
+    b = [0.8 * math.cos(i * 0.53) + 0.4 * math.sin(i * 2.9) - 0.2 for i in range(250)]
+    c = [1.3 * math.sin(i * 0.77) for i in range(200)]
+    return a, b, c
+
+
+def case_hist_options():
+    """hist's keyword arguments, one panel per family.
+
+    Top left: weights over explicit, uneven bin edges, narrowed by rwidth and
+    shifted by align. Top right: three datasets side by side (histtype='bar').
+    Bottom left: two datasets stacked over a fixed range, normalised as a
+    stack (density with stacked=True). Bottom right: stacked step outlines
+    over a reverse-cumulative stepfilled histogram.
+    """
+    import math
+
+    a, b, c = _hist_datasets()
+    w = [0.5 + 0.5 * math.cos(i * 0.9) ** 2 for i in range(len(a))]
+
+    fig = plt.figure(figsize=(6.4, 4.8), dpi=100)
+    ax1 = fig.add_subplot(2, 2, 1)
+    ax1.hist(a, bins=[-2.0, -1.2, -0.5, 0.0, 0.3, 1.0, 2.2], weights=w,
+             rwidth=0.7, align="left")
+    ax2 = fig.add_subplot(2, 2, 2)
+    ax2.hist([a, b, c], bins=8)
+    ax3 = fig.add_subplot(2, 2, 3)
+    ax3.hist([b, c], bins=12, range=(-1.5, 1.5), density=True, histtype="barstacked")
+    ax4 = fig.add_subplot(2, 2, 4)
+    ax4.hist(c, bins=10, histtype="stepfilled", cumulative=-1)
+    ax4.hist([a, b], bins=10, histtype="step", stacked=True)
+    save(fig, "hist_options")
+
+
+def case_hist_horizontal():
+    """orientation='horizontal' with a raised bottom and narrowed bars, and a
+    right-aligned cumulative density drawn as a filled outline."""
+    a, b, _ = _hist_datasets()
+
+    fig = plt.figure(figsize=(6.4, 4.8), dpi=100)
+    ax1 = fig.add_subplot(1, 2, 1)
+    ax1.hist(a, bins=9, orientation="horizontal", bottom=3, rwidth=0.5)
+    ax2 = fig.add_subplot(1, 2, 2)
+    ax2.hist(b, bins=7, orientation="horizontal", histtype="stepfilled",
+             cumulative=True, density=True, align="right")
+    save(fig, "hist_horizontal")
+
+
+def case_hist_log():
+    """log=True on bars and on a step outline: the value axis goes log, and
+    the empty bins' zero heights are clipped rather than breaking the view."""
+    import math
+
+    tail = [math.exp(2.0 * math.sin(i * 0.37) + 1.5 * math.cos(i * 1.3)) for i in range(300)]
+
+    fig = plt.figure(figsize=(6.4, 4.8), dpi=100)
+    ax1 = fig.add_subplot(1, 2, 1)
+    ax1.hist(tail, bins=25, log=True)
+    ax2 = fig.add_subplot(1, 2, 2)
+    ax2.hist(tail, bins=15, histtype="step", log=True, orientation="horizontal")
+    save(fig, "hist_log")
+
+
 def case_hist2d():
     """Counts over a 2D grid, drawn as a mesh."""
     x = [0.1, 0.5, 0.9, 1.2, 1.8, 2.1, 2.4, 0.3, 1.1, 2.9, 1.4, 2.0, 0.7, 2.6]
@@ -2492,6 +2884,21 @@ CASES = [
     case_sup_positioned,
     case_figimage,
     case_text_probe,
+    case_hist_options,
+    case_hist_horizontal,
+    case_hist_log,
+    case_errorbar_full,
+    case_pie_full,
+    case_contour_auto,
+    case_hexbin_full,
+    case_violin_full,
+    case_xcorr_full,
+    case_boxplot_full,
+    case_quiver_colors,
+    case_tri_explicit,
+    case_contour_over_mesh,
+    case_errorbar_limits,
+    case_hexbin_log_marginals,
 ]
 
 
@@ -2504,10 +2911,19 @@ def main():
     matplotlib.rcdefaults()
 
     os.makedirs(OUT_DIR, exist_ok=True)
-    for case in CASES:
+    # Case names on the command line (without the case_ prefix) regenerate
+    # just those references and leave the rest of the committed set alone.
+    names = {c.__name__[len("case_"):]: c for c in CASES}
+    wanted = sys.argv[1:]
+    unknown = [w for w in wanted if w not in names]
+    if unknown:
+        print(f"unknown case(s): {', '.join(unknown)}")
+        return 1
+    cases = [names[w] for w in wanted] if wanted else CASES
+    for case in cases:
         case()
 
-    print(f"\n{len(CASES)} reference(s) written to {os.path.normpath(OUT_DIR)}")
+    print(f"\n{len(cases)} reference(s) written to {os.path.normpath(OUT_DIR)}")
     return 0
 
 

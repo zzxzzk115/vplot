@@ -68,17 +68,23 @@ STATUS = {
     "bar": (FULL, "vplAxesBar", "stacking via the bottom array"),
     "barh": (FULL, "vplAxesBarH", "stacking via the left array"),
     "hist": (
-        PARTIAL,
-        "vplAxesHist",
-        "counts or density over equal bins; no weights, stacking, "
-        "explicit bin edges or step/stepfilled types",
+        FULL,
+        "vplAxesHistFull",
+        "several datasets, weights, explicit edges or a range, density, "
+        "cumulative either way, all four histtypes, stacked, align, "
+        "orientation, rwidth, log and a scalar bottom; vplAxesHist is the "
+        "one-dataset convenience. A per-bin bottom array is the rare form not "
+        "offered",
     ),
     "fill_between": (FULL, "vplAxesFillBetween", "the `where` mask, `interpolate`, and all three `step` modes"),
     "fill_betweenx": (FULL, "vplAxesFillBetweenX", "the `where` mask, `interpolate`, and all three `step` modes"),
     "errorbar": (
-        PARTIAL,
-        "vplAxesErrorBar",
-        "symmetric xerr and yerr; no asymmetric pairs, no errorevery, no fmt",
+        FULL,
+        "vplAxesErrorBarFull",
+        "symmetric or asymmetric xerr and yerr, fmt (including 'none'), "
+        "ecolor, elinewidth, elinestyle, capsize, capthick, errorevery, "
+        "barsabove, and lolims/uplims/xlolims/xuplims limit carets; "
+        "vplAxesErrorBar is the symmetric-yerr convenience",
     ),
     "ecdf": (FULL, "vplAxesEcdf", "ascending or complementary, weighted, either orientation; compress is a dedup that only speeds drawing"),
     "arrow": (
@@ -105,33 +111,42 @@ STATUS = {
     ),
     "tripcolor": (
         PARTIAL,
-        "vplAxesTriPcolor",
-        "flat shading over a computed Delaunay grid; no gouraud, explicit "
-        "triangles, mask or facecolors",
+        "vplAxesTriPcolorFull",
+        "flat shading over the Delaunay grid or explicit triangles with a mask, "
+        "c per point or per triangle (facecolors=), cmap, vmin/vmax and alpha; "
+        "vplTriangulate gives the Delaunay triangles to line values up with, "
+        "and vplAxesTriPcolor is the per-point Delaunay convenience. No "
+        "shading='gouraud', edgecolors or norm",
     ),
     "tricontour": (
         PARTIAL,
-        "vplAxesTriContour",
-        "explicit levels over a computed Delaunay grid; no explicit triangles, "
-        "mask or level count; clabel is structured-grid only",
+        "vplAxesTriContourFull",
+        "explicit or automatic levels over the Delaunay grid or explicit "
+        "triangles with a mask (vplAxesTriContour is the Delaunay, explicit-"
+        "levels convenience); clabel is structured-grid only",
     ),
     "tricontourf": (
-        PARTIAL,
-        "vplAxesTriContourF",
-        "explicit levels over a computed Delaunay grid; no explicit triangles, "
-        "mask, level count or extend=",
+        FULL,
+        "vplAxesTriContourFFull",
+        "explicit or automatic levels over the Delaunay grid or explicit "
+        "triangles with a mask, and extend=; vplAxesTriContourF is the "
+        "Delaunay, explicit-levels convenience",
     ),
     "triplot": (
-        PARTIAL,
-        "vplAxesTriplot",
-        "the computed Delaunay grid as lines; no explicit triangles, no mask, "
-        "no marker form",
+        FULL,
+        "vplAxesTriplotFull",
+        "the Delaunay grid or explicit triangles with a mask, and a format "
+        "string for colour, line style and node markers; vplAxesTriplot is the "
+        "plain-lines convenience",
     ),
     "hexbin": (
-        PARTIAL,
-        "vplAxesHexbin",
-        "counts in viridis at a chosen gridsize; no C/reduce_C_function, mincnt, "
-        "extent, log scales, bins='log' or a chosen colormap",
+        FULL,
+        "vplAxesHexbinFull",
+        "counts or C reduced by mean/sum/max/min/median/std, mincnt, extent, "
+        "gridsize=(nx, ny), a colormap, vmin/vmax, bins='log' or an integer, "
+        "xscale/yscale='log' and marginals; vplAxesHexbin is the counts "
+        "convenience. reduce_C_function is one of six named reductions rather "
+        "than any callable",
     ),
     "hist2d": (
         PARTIAL,
@@ -140,8 +155,11 @@ STATUS = {
     ),
     "pie": (
         PARTIAL,
-        "vplAxesPie",
-        "wedges and the axes setup; no labels, autopct, explode, startangle or shadow",
+        "vplAxesPieFull",
+        "labels, autopct (a %-format), explode, startangle, radius, "
+        "counterclock, normalize, center, frame, rotatelabels, colors and the "
+        "label/pct distances; vplAxesPie is the bare-wedges convenience. No "
+        "shadow, hatch, wedgeprops or callable autopct",
     ),
     "imshow": (
         PARTIAL,
@@ -152,7 +170,9 @@ STATUS = {
     "contour": (
         PARTIAL,
         "vplAxesContour",
-        "explicit levels only: no automatic level choice",
+        "explicit levels or a count (NULL levels: MaxNLocator(N + 1) over the data, "
+        "N = 7 by default), read back with vplContourGetLevels; no X/Y "
+        "coordinate arrays beyond an extent, no locator= or norm=",
     ),
     "clabel": (
         PARTIAL,
@@ -163,7 +183,7 @@ STATUS = {
     "contourf": (
         PARTIAL,
         "vplAxesContourF",
-        "explicit levels only, extend='neither'; no automatic levels, no hatching",
+        "explicit or automatic levels and all four extend modes; no hatching",
     ),
     "hlines": (FULL, "vplAxesHLines", "colour, width and style"),
     "vlines": (FULL, "vplAxesVLines", "colour, width and style"),
@@ -186,9 +206,12 @@ STATUS = {
     "stackplot": (FULL, "vplAxesStackPlot", "all four baselines: zero, sym, wiggle and the weighted_wiggle streamgraph"),
     "violinplot": (
         PARTIAL,
-        "vplAxesViolinPlot",
-        "Scott's bandwidth and the default styling; no showmedians, no custom "
-        "positions, widths or bw_method",
+        "vplAxesViolinPlotFull",
+        "positions, widths, showmeans/showextrema/showmedians, quantiles, points, "
+        "bw_method (scott, silverman or a factor), side, orientation and "
+        "face/line colours; vplAxesViolinPlot is the defaults convenience. No "
+        "callable bw_method, and a cycling linecolor list colours every line "
+        "with its first entry",
     ),
     "violin": (
         PARTIAL,
@@ -198,9 +221,12 @@ STATUS = {
     ),
     "boxplot": (
         PARTIAL,
-        "vplAxesBoxPlot",
-        "the defaults: 1.5 IQR whiskers, vertical, no notches, no patch_artist, "
-        "no means, no custom positions or labels",
+        "vplAxesBoxPlotFull",
+        "whis (a factor or a percentile pair), positions, widths, tick_labels, "
+        "orientation, patch_artist, notch, showmeans with meanline, showcaps, "
+        "showbox, showfliers and manage_ticks; vplAxesBoxPlot is the defaults "
+        "convenience. No bootstrap, usermedians/conf_intervals, sym, capwidths "
+        "or the *props dictionaries",
     ),
     "psd": (FULL, "vplAxesPsd", "Welch's method with the window, detrend, sides and pad_to knobs"),
     "csd": (FULL, "vplAxesCsd", "same helper and knobs as psd"),
@@ -217,8 +243,9 @@ STATUS = {
     "quiver": (
         PARTIAL,
         "vplAxesQuiver",
-        "units='width' and angles='uv' with matplotlib's auto-scaling; no "
-        "scale_units, no per-arrow colour or colormap, no masked arrays",
+        "units='width' and angles='uv' with matplotlib's auto-scaling, and "
+        "per-arrow colour from C through a colormap (vmin/vmax or autoscaled) "
+        "or an explicit colour list; no scale_units, no masked arrays",
     ),
     "quiverkey": (
         PARTIAL,
@@ -238,8 +265,8 @@ STATUS = {
         "the RK12 integrator, mask and spiral seeding at a chosen density; no "
         "per-line colour or width, no start_points, no integration_direction",
     ),
-    "acorr": (PARTIAL, "vplAxesACorr", "usevlines with normed; no detrend, no line form"),
-    "xcorr": (PARTIAL, "vplAxesXCorr", "usevlines with normed; no detrend, no line form"),
+    "acorr": (FULL, "vplAxesACorrFull", "normed, maxlags (0 for None), detrend none/mean/linear and both the stalk and the marker form; vplAxesACorr is the defaults convenience"),
+    "xcorr": (FULL, "vplAxesXCorrFull", "normed, maxlags (0 for None), detrend none/mean/linear and both the stalk and the marker form; vplAxesXCorr is the defaults convenience"),
     "grouped_bar": (
         PARTIAL,
         "vplAxesGroupedBar",
@@ -248,9 +275,10 @@ STATUS = {
     ),
     "pie_label": (
         PARTIAL,
-        "vplAxesPieLabel",
-        "centred labels at a chosen distance; no format strings, no rotate=, "
-        "no outer alignment",
+        "vplAxesPieLabelFull",
+        "explicit labels at a chosen distance with alignment (auto, center, "
+        "outer) and rotate=; vplAxesPieLabel is the centred convenience. No "
+        "{absval}/{frac} format strings",
     ),
     "pcolorfast": (
         FULL,
@@ -282,9 +310,10 @@ STATUS = {
     ),
     "bxp": (
         PARTIAL,
-        "vplAxesBxp",
-        "the five statistics and fliers, which is what boxplot itself passes "
-        "down; no means, notches, patch_artist, custom positions or widths",
+        "vplAxesBxpFull",
+        "the five statistics and fliers, plus means and notch ends alongside, "
+        "with the same options as boxplot; vplAxesBxp is the statistics-only "
+        "convenience. No capwidths or *props dictionaries",
     ),
     "axline": (FULL, "vplAxesAxLine", "point-and-slope, including a vertical slope"),
     "bar_label": (
@@ -349,9 +378,15 @@ STATUS = {
     "set_anchor": (
         PARTIAL,
         "vplAxesSetAnchor",
-        "as a pair of fractions rather than the 'SW'..'NE' names; no 'C' string form",
+        "as a pair of fractions, or by name ('C', 'SW'..'NE') via "
+        "vplAxesSetAnchorCode; no share= across a sharing group",
     ),
-    "get_anchor": (PARTIAL, "vplAxesGetAnchor", "returns the pair, not the name"),
+    "get_anchor": (
+        FULL,
+        "vplAxesGetAnchor",
+        "the pair, and through vplAxesGetAnchorCode the name it was set by (NULL "
+        "after a pair), as get_anchor returns whichever form it was given",
+    ),
     "locator_params": (
         PARTIAL,
         "vplAxesLocatorParamsFull",
@@ -658,7 +693,7 @@ STATUS = {
         "itself, which is the whole of what sca/gca can mean here",
     ),
     "tight_layout": (FULL, "vplFigureTightLayout", ""),
-    "savefig": (PARTIAL, "vplFigureSaveFig", "png, svg and pdf; no eps, ps or dpi override"),
+    "savefig": (PARTIAL, "vplFigureSaveFig", "png, svg and pdf, with a dpi override for png (vector output is drawn at 72 dpi, as matplotlib's is); no eps or ps"),
     "draw": (FULL, "vplFigureRenderRGBA", "renders into a caller-owned buffer"),
     "get_size_inches": (FULL, "vplFigureGetSizeInches", "both dimensions, in inches"),
     "clear": (NA, "", "figures are created and destroyed, not reused"),
@@ -798,6 +833,9 @@ def signature_of(cls, name):
     except (TypeError, ValueError):
         return ""
     sig = sig.replace("self, ", "").replace("self", "")
+    # A default that is a function prints with its memory address, which
+    # changes every run and would rewrite those rows on each regeneration.
+    sig = re.sub(r"<function (\w+) at 0x[0-9A-Fa-f]+>", r"<function \1>", sig)
     if len(sig) > 88:
         sig = sig[:85] + "...)"
     return sig

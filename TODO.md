@@ -17,6 +17,9 @@ test harness (`tests/test_baseline.cpp`).
 - `secondary_xaxis` / `secondary_yaxis`: arbitrary forward/inverse function
   pairs (only affine conversions are supported so far).
 - `set_aspect`: the `datalim` adjustable mode (only `box` is drawn).
+- Log axes spanning less than a decade: matplotlib labels the minor ticks
+  (`2×10¹`, `3×10¹`); vplot instead places major ticks at fractional powers
+  (`10^1.30`).
 
 ## Axis sharing and layout
 
@@ -29,7 +32,8 @@ test harness (`tests/test_baseline.cpp`).
 
 ## Output
 
-- `savefig`: EPS and PS backends, and a `dpi` override (PNG/SVG/PDF are done).
+- `savefig`: EPS and PS backends (PNG/SVG/PDF, and a PNG `dpi` override, are
+  done).
 - `imshow`: an optional resampled raster path for large photographic arrays
   (the default vector quad-per-cell path stays for heatmaps).
 - Mathtext: fractions, radicals, and the full symbol table. Superscripts, which
@@ -40,28 +44,24 @@ test harness (`tests/test_baseline.cpp`).
 The long tail — each command works at its defaults and is missing some keyword
 arguments. Notable ones:
 
-- `contour` / `contourf`: automatic level selection, `extend`, hatching.
-- `hist`: weights, explicit bin edges, `histtype`, stacking.
-- `errorbar`: asymmetric error pairs, `errorevery`, format strings.
-- `pie`: labels, `autopct`, `explode`, `startangle`.
-- `violinplot`, `boxplot` / `bxp`: medians/means, custom positions, notches,
-  bandwidth selection.
-- `hexbin`: `C`/`reduce_C_function`, `mincnt`, log scales, chosen colormap.
-- `quiver` / `barbs`: per-arrow colour and custom sizes.
-- The `tripcolor` / `tricontour` / `tricontourf` / `triplot` family: explicit
-  triangles, masks, Gouraud shading.
+- `contourf`: hatching.
+- `pie`: `shadow`, `hatch`, `wedgeprops`, callable `autopct`; `pie_label`'s
+  `{absval}`/`{frac}` format strings.
+- `boxplot` / `bxp`: `bootstrap`, `usermedians`/`conf_intervals`, `capwidths`
+  and the `*props` style dictionaries.
+- `quiver`: `scale_units` and other `units`/`angles`; `barbs`: per-barb
+  colour and custom sizes.
+- `tripcolor`: `shading='gouraud'` (needs Gouraud triangles in every
+  backend) and edge colours.
 - `annotate`: arrow styles beyond the default.
-- `acorr` / `xcorr`: `detrend` and the non-vlines line form.
 
 ## Ticks, labels, and other accessors
 
 - `set_xticklabels` / `set_yticklabels`: `minor=True` and `fontdict`.
-- `get_anchor`: return the string code form as well as the pair.
 
 ## Infrastructure
 
 - Continuous integration on Linux and macOS in addition to Windows.
-- Font embedding, for a truly zero-runtime-dependency build.
 - Tagged releases and API stability once the surface settles.
 
 See `docs/API-COVERAGE.md` for the complete, generated status of every method.

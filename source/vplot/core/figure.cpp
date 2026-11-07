@@ -358,82 +358,388 @@ PolyPatch &Axes::bar(const double *x,
 
 PolyPatch &Axes::hist(const double *values, std::size_t n, std::size_t bins, bool density)
 {
-    auto patch = std::make_unique<PolyPatch>();
+    HistOptions options;
+    options.bins = bins;
+    options.density = density;
+    const double *const datasets[1] = {values};
+    const std::size_t counts[1] = {n};
+    return *hist(datasets, counts, nullptr, 1, options).front();
+}
 
-    if (n == 0 || bins == 0) {
-        patches.push_back(std::move(patch));
-        return *patches.back();
+namespace
+{
+
+/* numpy's linspace: k * step + start, with the last edge pinned to `stop`. */
+std::vector<double> linspace_edges(double start, double stop, std::size_t bins)
+{
+    std::vector<double> edges(bins + 1);
+    const double step = (stop - start) / static_cast<double>(bins);
+    for (std::size_t k = 0; k <= bins; ++k) {
+        edges[k] = static_cast<double>(k) * step + start;
     }
+    edges[bins] = stop;
+    return edges;
+}
 
-    /* The data's own range, as numpy's histogram picks it. */
-    double lo = std::numeric_limits<double>::infinity();
-    double hi = -lo;
+/*
+ * numpy.histogram over the given edges, unweighted or weighted. `uniform`
+ * selects numpy's equal-bin fast path (what an integer `bins` takes), which
+ * computes the index arithmetically and then nudges it by the edges; otherwise
+ * it is a search, as for explicit edges. Both treat the bins as half-open
+ * except the last, which includes its right edge, and drop anything outside.
+ */
+std::vector<double> numpy_histogram(const double *x, std::size_t n, const double *w,
+                                    const std::vector<double> &edges, bool uniform)
+{
+    const std::size_t nbins = edges.size() - 1;
+    std::vector<double> counts(nbins, 0.0);
+    const double first = edges.front();
+    const double last = edges.back();
+
     for (std::size_t i = 0; i < n; ++i) {
-        if (!std::isfinite(values[i])) {
-            continue;
+        const double v = x[i];
+        if (!(v >= first && v <= last)) {
+            continue; /* out of range, or NaN */
         }
-        lo = std::min(lo, values[i]);
-        hi = std::max(hi, values[i]);
-    }
-    if (!std::isfinite(lo)) {
-        patches.push_back(std::move(patch));
-        return *patches.back();
-    }
-    if (lo == hi) {
-        /* numpy widens a degenerate range to +/- 0.5 rather than dividing by
-           zero, and matplotlib inherits that. */
-        lo -= 0.5;
-        hi += 0.5;
-    }
-
-    const double width = (hi - lo) / static_cast<double>(bins);
-    std::vector<double> counts(bins, 0.0);
-    for (std::size_t i = 0; i < n; ++i) {
-        if (!std::isfinite(values[i])) {
-            continue;
+        std::size_t k = 0;
+        if (uniform) {
+            const double f = (v - first) / (last - first) * static_cast<double>(nbins);
+            std::ptrdiff_t idx = static_cast<std::ptrdiff_t>(f);
+            if (idx == static_cast<std::ptrdiff_t>(nbins)) {
+                --idx;
+            }
+            if (v < edges[static_cast<std::size_t>(idx)]) {
+                --idx;
+            }
+            if (v >= edges[static_cast<std::size_t>(idx) + 1] &&
+                idx != static_cast<std::ptrdiff_t>(nbins) - 1) {
+                ++idx;
+            }
+            k = static_cast<std::size_t>(idx);
+        } else if (v == last) {
+            /* The last edge is inclusive. */
+            k = nbins - 1;
+        } else {
+            /* Elsewhere the bin starts at the last edge at or below v. */
+            k = static_cast<std::size_t>(std::upper_bound(edges.begin(), edges.end(), v) -
+                                         edges.begin()) -
+                1;
         }
-        /* Half-open bins except the last, which includes the right edge (numpy's
-           rule, so the top value is not lost). */
-        std::size_t k = static_cast<std::size_t>((values[i] - lo) / width);
-        if (k >= bins) {
-            k = bins - 1;
+        counts[k] += w != nullptr ? w[i] : 1.0;
+    }
+    return counts;
+}
+
+} // namespace
+
+std::vector<PolyPatch *> Axes::hist(const double *const *datasets,
+                                    const std::size_t *counts,
+                                    const double *const *weights,
+                                    std::size_t nx,
+                                    const HistOptions &opt,
+                                    std::vector<double> *out_tops,
+                                    std::vector<double> *out_edges)
+{
+    std::vector<PolyPatch *> result;
+    if (nx == 0) {
+        return result;
+    }
+
+    const bool stacked = opt.stacked || opt.type == HistType::BarStacked;
+
+    /* hist takes its colours from the LINE cycle, one per dataset, before any
+       drawing -- not the patch cycle bar() would use. */
+    std::vector<Color> colors;
+    for (std::size_t i = 0; i < nx; ++i) {
+        colors.push_back(next_line_color());
+    }
+
+    /* The bin edges every dataset shares. */
+    std::vector<double> edges;
+    bool uniform = false;
+    if (opt.edges != nullptr && opt.edge_count >= 2) {
+        edges.assign(opt.edges, opt.edges + opt.edge_count);
+    } else {
+        const std::size_t bins = opt.bins == 0 ? 10 : opt.bins;
+        double lo = 0.0;
+        double hi = 1.0;
+        if (opt.has_range) {
+            lo = opt.range_lo;
+            hi = opt.range_hi;
+        } else {
+            /* matplotlib's own nan-ignoring range over every dataset. */
+            double mn = std::numeric_limits<double>::infinity();
+            double mx = -mn;
+            for (std::size_t d = 0; d < nx; ++d) {
+                for (std::size_t i = 0; i < counts[d]; ++i) {
+                    const double v = datasets[d][i];
+                    if (std::isnan(v)) {
+                        continue;
+                    }
+                    mn = std::min(mn, v);
+                    mx = std::max(mx, v);
+                }
+            }
+            if (mn <= mx) {
+                lo = mn;
+                hi = mx;
+            }
         }
-        counts[k] += 1.0;
-    }
-
-    /* density=True normalises to unit area: height = count / (total * bin width),
-       numpy's `n / db / n.sum()` for equal-width bins. */
-    double height_scale = 1.0;
-    if (density) {
-        double total = 0.0;
-        for (double ct : counts) {
-            total += ct;
+        if (lo == hi) {
+            /* numpy widens a degenerate range rather than dividing by zero. */
+            lo -= 0.5;
+            hi += 0.5;
         }
-        if (total > 0.0 && width > 0.0) {
-            height_scale = 1.0 / (total * width);
+        edges = linspace_edges(lo, hi, bins);
+        /* With one dataset numpy bins on the integer count (its fast path);
+           with several, matplotlib computes the edges first and hands the
+           array over, which takes the search path. */
+        uniform = nx == 1;
+    }
+    const std::size_t nbins = edges.size() - 1;
+    std::vector<double> db(nbins);
+    for (std::size_t k = 0; k < nbins; ++k) {
+        db[k] = edges[k + 1] - edges[k];
+    }
+
+    /* tops[d][k], as matplotlib's (n_datasets, n_bins) array. */
+    std::vector<std::vector<double>> tops(nx);
+    for (std::size_t d = 0; d < nx; ++d) {
+        const double *w = weights != nullptr ? weights[d] : nullptr;
+        tops[d] = numpy_histogram(datasets[d], counts[d], w, edges, uniform);
+        if (opt.density && !stacked) {
+            double total = 0.0;
+            for (double v : tops[d]) {
+                total += v;
+            }
+            for (std::size_t k = 0; k < nbins; ++k) {
+                tops[d][k] = tops[d][k] / db[k] / total;
+            }
         }
     }
 
-    for (std::size_t k = 0; k < bins; ++k) {
-        const double x0 = lo + static_cast<double>(k) * width;
-        const double x1 = lo + static_cast<double>(k + 1) * width;
-        const double h = counts[k] * height_scale;
-        patch->path.move_to(x0, 0.0);
-        patch->path.line_to(x1, 0.0);
-        patch->path.line_to(x1, h);
-        patch->path.line_to(x0, h);
-        patch->path.close_poly();
+    if (stacked) {
+        for (std::size_t d = 1; d < nx; ++d) {
+            for (std::size_t k = 0; k < nbins; ++k) {
+                tops[d][k] += tops[d - 1][k];
+            }
+        }
+        if (opt.density) {
+            double total = 0.0;
+            for (double v : tops[nx - 1]) {
+                total += v;
+            }
+            for (std::size_t d = 0; d < nx; ++d) {
+                for (std::size_t k = 0; k < nbins; ++k) {
+                    tops[d][k] = (tops[d][k] / db[k]) / total;
+                }
+            }
+        }
     }
 
-    patch->facecolor = next_patch_color();
-
-    /* Sticky baseline at zero: the bars sit on the axis. */
-    if (std::find(sticky_y.begin(), sticky_y.end(), 0.0) == sticky_y.end()) {
-        sticky_y.push_back(0.0);
+    if (opt.cumulative != 0) {
+        for (std::size_t d = 0; d < nx; ++d) {
+            std::vector<double> &t = tops[d];
+            if (opt.density) {
+                for (std::size_t k = 0; k < nbins; ++k) {
+                    t[k] *= db[k];
+                }
+            }
+            if (opt.cumulative > 0) {
+                for (std::size_t k = 1; k < nbins; ++k) {
+                    t[k] += t[k - 1];
+                }
+            } else {
+                for (std::size_t k = nbins - 1; k-- > 0;) {
+                    t[k] += t[k + 1];
+                }
+            }
+        }
     }
 
-    patches.push_back(std::move(patch));
-    return *patches.back();
+    if (opt.log) {
+        (opt.horizontal ? xscale : yscale) = ScaleType::Log;
+    }
+
+    std::vector<double> &sticky = opt.horizontal ? sticky_x : sticky_y;
+    auto add_sticky = [&sticky](double v) {
+        if (std::find(sticky.begin(), sticky.end(), v) == sticky.end()) {
+            sticky.push_back(v);
+        }
+    };
+
+    if (opt.type == HistType::Bar || opt.type == HistType::BarStacked) {
+        double dr = 1.0;
+        if (!std::isnan(opt.rwidth)) {
+            dr = std::clamp(opt.rwidth, 0.0, 1.0);
+        } else if (nx > 1 && !stacked) {
+            dr = 0.8;
+        }
+
+        std::vector<double> width(nbins);
+        std::vector<double> boffset(nbins);
+        std::vector<double> dw(nbins, 0.0);
+        for (std::size_t k = 0; k < nbins; ++k) {
+            const double totwidth = db[k];
+            if (!stacked) {
+                width[k] = dr * totwidth / static_cast<double>(nx);
+                dw[k] = width[k];
+                boffset[k] = -0.5 * dr * totwidth * (1.0 - 1.0 / static_cast<double>(nx));
+            } else {
+                width[k] = dr * totwidth;
+                boffset[k] = 0.0;
+            }
+            if (opt.align == HistAlign::Mid) {
+                boffset[k] += 0.5 * totwidth;
+            } else if (opt.align == HistAlign::Right) {
+                boffset[k] += totwidth;
+            }
+        }
+
+        std::vector<double> bottom(nbins, opt.bottom);
+        for (std::size_t d = 0; d < nx; ++d) {
+            auto patch = std::make_unique<PolyPatch>();
+            for (std::size_t k = 0; k < nbins; ++k) {
+                const double height = stacked ? tops[d][k] - bottom[k] : tops[d][k];
+                /* bar(align='center'): the bar is centred on its position. */
+                const double c = edges[k] + boffset[k];
+                const double a0 = c - 0.5 * width[k];
+                const double a1 = a0 + width[k];
+                const double v0 = bottom[k];
+                const double v1 = bottom[k] + height;
+                if (opt.horizontal) {
+                    patch->path.move_to(v0, a0);
+                    patch->path.line_to(v1, a0);
+                    patch->path.line_to(v1, a1);
+                    patch->path.line_to(v0, a1);
+                } else {
+                    patch->path.move_to(a0, v0);
+                    patch->path.line_to(a1, v0);
+                    patch->path.line_to(a1, v1);
+                    patch->path.line_to(a0, v1);
+                }
+                patch->path.close_poly();
+                boffset[k] += dw[k];
+            }
+            patch->facecolor = colors[d];
+            /* Only the lowest bars keep their sticky edge, so margins can still
+               expand past the bars stacked on top. */
+            if (d == 0) {
+                for (double b : bottom) {
+                    add_sticky(b);
+                }
+            }
+            if (stacked) {
+                bottom = tops[d];
+            }
+            patches.push_back(std::move(patch));
+            result.push_back(patches.back().get());
+        }
+    } else {
+        /* The outline, as matplotlib builds it: the bin edges doubled up into
+           a staircase over the top, then the same x values back along the
+           bottom, 4 * len(bins) - 3 points in all. */
+        const std::size_t nb = edges.size();
+        const std::size_t total = 4 * nb - 3;
+        std::vector<double> sx(total, 0.0);
+        std::vector<double> sy(total, 0.0);
+        for (std::size_t k = 0; k < nb; ++k) {
+            sx[2 * k] = edges[k];
+        }
+        for (std::size_t k = 0; k + 1 < nb; ++k) {
+            sx[2 * k + 1] = edges[k];
+        }
+        for (std::size_t j = 0; j < 2 * nb - 2; ++j) {
+            sx[2 * nb - 1 + j] = sx[2 * nb - 2 - j];
+        }
+        for (std::size_t j = 1; j < 2 * nb - 1; j += 2) {
+            sy[j] = opt.bottom;
+            sy[j + 1] = opt.bottom;
+        }
+        for (std::size_t j = 0; j < 2 * nb - 2; ++j) {
+            sy[2 * nb - 1 + j] = sy[2 * nb - 2 - j];
+        }
+        const double shift = 0.5 * (edges[1] - edges[0]);
+        if (opt.align == HistAlign::Left) {
+            for (double &v : sx) {
+                v -= shift;
+            }
+        } else if (opt.align == HistAlign::Right) {
+            for (double &v : sx) {
+                v += shift;
+            }
+        }
+
+        const bool fill = opt.type == HistType::StepFilled;
+        std::vector<std::vector<double>> ys;
+        for (std::size_t d = 0; d < nx; ++d) {
+            if (stacked) {
+                /* The previous polygon's top becomes this one's bottom. */
+                for (std::size_t j = 0; j < 2 * nb - 2; ++j) {
+                    sy[2 * nb - 1 + j] = sy[2 * nb - 2 - j];
+                }
+            }
+            for (std::size_t k = 0; k + 1 < nb; ++k) {
+                const double t = tops[d][k] + opt.bottom;
+                sy[2 * k + 1] = t;
+                sy[2 * k + 2] = t;
+            }
+            sy[0] = sy[total - 1];
+            ys.push_back(sy);
+        }
+
+        /* step is open (it stops after the top run); stepfilled drops the
+           redundant last point and closes. */
+        const std::size_t count = fill ? total - 1 : 2 * nb;
+        std::vector<PolyPatch *> made(nx, nullptr);
+        /* Added in reverse so that, stacked, the lower datasets draw on top. */
+        for (std::size_t d = nx; d-- > 0;) {
+            auto patch = std::make_unique<PolyPatch>();
+            std::vector<double> px(sx.begin(), sx.begin() + static_cast<std::ptrdiff_t>(count));
+            std::vector<double> py(ys[d].begin(),
+                                   ys[d].begin() + static_cast<std::ptrdiff_t>(count));
+            if (opt.horizontal) {
+                std::swap(px, py);
+            }
+            std::size_t m = count;
+            /* Polygon: an open outline that ends where it began drops the
+               repeat; a closed one treats a repeated end as the close. */
+            if (m > 2 && px.front() == px[m - 1] && py.front() == py[m - 1]) {
+                --m;
+            }
+            patch->path.move_to(px[0], py[0]);
+            for (std::size_t j = 1; j < m; ++j) {
+                patch->path.line_to(px[j], py[j]);
+            }
+            if (fill) {
+                patch->path.close_poly();
+                patch->facecolor = colors[d];
+            } else {
+                patch->facecolor = Color::none();
+                patch->edgecolor = colors[d];
+                patch->linewidth = 1.0; /* patch.linewidth */
+                patch->line_tier = true;
+            }
+            /* fill() draws a colour from the patch cycle even though hist
+               overrides it, so the cycle still advances. */
+            (void)next_patch_color();
+            patches.push_back(std::move(patch));
+            made[d] = patches.back().get();
+        }
+        add_sticky(0.0);
+        result = made;
+    }
+
+    if (out_edges != nullptr) {
+        *out_edges = edges;
+    }
+    if (out_tops != nullptr) {
+        out_tops->clear();
+        for (const std::vector<double> &t : tops) {
+            out_tops->insert(out_tops->end(), t.begin(), t.end());
+        }
+    }
+    return result;
 }
 
 ImageGrid &Axes::imshow(const double *values, std::size_t rows, std::size_t cols)
@@ -518,30 +824,98 @@ ImageGrid &Axes::spy(const double *values, std::size_t rows, std::size_t cols)
 
 void Axes::hexbin(const double *x, const double *y, std::size_t n, std::size_t gridsize)
 {
-    if (n == 0 || gridsize == 0) {
+    HexbinOptions options;
+    options.nx = gridsize;
+    hexbin(x, y, n, options);
+}
+
+namespace
+{
+
+double reduce_values(std::vector<double> v, HexReduce how)
+{
+    if (v.empty()) {
+        return std::numeric_limits<double>::quiet_NaN();
+    }
+    double sum = 0.0;
+    for (double d : v) {
+        sum += d;
+    }
+    switch (how) {
+        case HexReduce::Sum: return sum;
+        case HexReduce::Max: return *std::max_element(v.begin(), v.end());
+        case HexReduce::Min: return *std::min_element(v.begin(), v.end());
+        case HexReduce::Median: {
+            std::sort(v.begin(), v.end());
+            const std::size_t m = v.size() / 2;
+            return v.size() % 2 == 1 ? v[m] : 0.5 * (v[m - 1] + v[m]);
+        }
+        case HexReduce::Std: {
+            const double mean = sum / static_cast<double>(v.size());
+            double ss = 0.0;
+            for (double d : v) {
+                ss += (d - mean) * (d - mean);
+            }
+            return std::sqrt(ss / static_cast<double>(v.size())); /* numpy's ddof=0 */
+        }
+        case HexReduce::Mean:
+        default: return sum / static_cast<double>(v.size());
+    }
+}
+
+} // namespace
+
+void Axes::hexbin(const double *x_data, const double *y_data, std::size_t n,
+                  const HexbinOptions &opt)
+{
+    if (n == 0 || opt.nx == 0) {
         return;
     }
+
+    /* Binning runs on tx, ty: the data, or its log10 on a log axis. */
+    std::vector<double> lx, ly;
+    if (opt.xlog) {
+        lx.resize(n);
+        for (std::size_t i = 0; i < n; ++i) {
+            lx[i] = std::log10(x_data[i]);
+        }
+    }
+    if (opt.ylog) {
+        ly.resize(n);
+        for (std::size_t i = 0; i < n; ++i) {
+            ly[i] = std::log10(y_data[i]);
+        }
+    }
+    const double *x = opt.xlog ? lx.data() : x_data;
+    const double *y = opt.ylog ? ly.data() : y_data;
 
     double xmin = std::numeric_limits<double>::infinity();
     double xmax = -xmin;
     double ymin = xmin;
     double ymax = xmax;
-    for (std::size_t i = 0; i < n; ++i) {
-        if (!std::isfinite(x[i]) || !std::isfinite(y[i])) {
-            continue;
+    if (opt.has_extent) {
+        xmin = opt.extent[0];
+        xmax = opt.extent[1];
+        ymin = opt.extent[2];
+        ymax = opt.extent[3];
+    } else {
+        for (std::size_t i = 0; i < n; ++i) {
+            if (!std::isfinite(x[i]) || !std::isfinite(y[i])) {
+                continue;
+            }
+            xmin = std::min(xmin, x[i]);
+            xmax = std::max(xmax, x[i]);
+            ymin = std::min(ymin, y[i]);
+            ymax = std::max(ymax, y[i]);
         }
-        xmin = std::min(xmin, x[i]);
-        xmax = std::max(xmax, x[i]);
-        ymin = std::min(ymin, y[i]);
-        ymax = std::max(ymax, y[i]);
     }
     if (!std::isfinite(xmin) || !std::isfinite(ymin)) {
         return;
     }
 
-    const long nx = static_cast<long>(gridsize);
+    const long nx = static_cast<long>(opt.nx);
     /* sqrt(3) keeps the hexagons regular rather than squashed. */
-    long ny = static_cast<long>(nx / std::sqrt(3.0));
+    long ny = opt.ny != 0 ? static_cast<long>(opt.ny) : static_cast<long>(nx / std::sqrt(3.0));
     if (ny < 1) {
         ny = 1;
     }
@@ -564,6 +938,13 @@ void Axes::hexbin(const double *x, const double *y, std::size_t n, std::size_t g
 
     std::vector<double> counts1(static_cast<std::size_t>(nx1 * ny1), 0.0);
     std::vector<double> counts2(static_cast<std::size_t>(nx2 * ny2), 0.0);
+    /* With C, the values that land in each hexagon, to reduce afterwards. */
+    std::vector<std::vector<double>> cs1;
+    std::vector<std::vector<double>> cs2;
+    if (opt.C != nullptr) {
+        cs1.resize(counts1.size());
+        cs2.resize(counts2.size());
+    }
 
     for (std::size_t i = 0; i < n; ++i) {
         if (!std::isfinite(x[i]) || !std::isfinite(y[i])) {
@@ -584,39 +965,134 @@ void Axes::hexbin(const double *x, const double *y, std::size_t n, std::size_t g
 
         if (d1 < d2) {
             if (ix1 >= 0 && ix1 < nx1 && iy1 >= 0 && iy1 < ny1) {
-                counts1[static_cast<std::size_t>(ix1 * ny1 + iy1)] += 1.0;
+                const auto k = static_cast<std::size_t>(ix1 * ny1 + iy1);
+                counts1[k] += 1.0;
+                if (opt.C != nullptr) {
+                    cs1[k].push_back(opt.C[i]);
+                }
             }
         } else {
             if (ix2 >= 0 && ix2 < nx2 && iy2 >= 0 && iy2 < ny2) {
-                counts2[static_cast<std::size_t>(ix2 * ny2 + iy2)] += 1.0;
+                const auto k = static_cast<std::size_t>(ix2 * ny2 + iy2);
+                counts2[k] += 1.0;
+                if (opt.C != nullptr) {
+                    cs2[k].push_back(opt.C[i]);
+                }
             }
         }
     }
 
-    double vmax = 0.0;
-    for (double c : counts1) {
-        vmax = std::max(vmax, c);
+    /* accum, as matplotlib builds it: counts (dropping those under mincnt),
+       or with C each hexagon's reduction, needing at least mincnt (default 1)
+       points. NaN marks a hexagon that is not drawn. */
+    const double nan = std::numeric_limits<double>::quiet_NaN();
+    const auto finish = [&](std::vector<double> &counts, std::vector<std::vector<double>> &cs) {
+        for (std::size_t k = 0; k < counts.size(); ++k) {
+            if (opt.C != nullptr) {
+                const std::size_t need = opt.mincnt == 0 ? 1 : opt.mincnt;
+                counts[k] = cs[k].size() >= need ? reduce_values(std::move(cs[k]), opt.reduce) : nan;
+            } else if (opt.mincnt != 0 && counts[k] < static_cast<double>(opt.mincnt)) {
+                counts[k] = nan;
+            }
+        }
+    };
+    finish(counts1, cs1);
+    finish(counts2, cs2);
+
+    double amin = std::numeric_limits<double>::infinity();
+    double amax = -amin;
+    for (const std::vector<double> *acc : {&counts1, &counts2}) {
+        for (double c : *acc) {
+            if (!std::isnan(c)) {
+                amin = std::min(amin, c);
+                amax = std::max(amax, c);
+            }
+        }
     }
-    for (double c : counts2) {
-        vmax = std::max(vmax, c);
-    }
-    if (!(vmax > 0.0)) {
+    if (!(amin <= amax)) {
         return;
     }
-    /* Every bin is drawn, empties included, scale 0 to densest. hexbin only drops
-       a bin when mincnt is given (default None), so matplotlib fills the whole
-       rectangle and paints empties in the colormap's lowest colour. */
-    const double vmin = 0.0;
+
+    /* bins=N: replace each value by the index of the value bin it falls in --
+       bins.searchsorted(accum) over N - 1 interior edges. */
+    if (opt.bins > 0 && !opt.log_bins) {
+        const std::size_t b = opt.bins - 1;
+        std::vector<double> edges;
+        for (std::size_t k = 0; k < b; ++k) {
+            edges.push_back(amin + (amax - amin) * static_cast<double>(k) / static_cast<double>(b));
+        }
+        for (std::vector<double> *acc : {&counts1, &counts2}) {
+            for (double &c : *acc) {
+                if (!std::isnan(c)) {
+                    c = static_cast<double>(std::lower_bound(edges.begin(), edges.end(), c) -
+                                            edges.begin());
+                }
+            }
+        }
+        amin = std::numeric_limits<double>::infinity();
+        amax = -amin;
+        for (const std::vector<double> *acc : {&counts1, &counts2}) {
+            for (double c : *acc) {
+                if (!std::isnan(c)) {
+                    amin = std::min(amin, c);
+                    amax = std::max(amax, c);
+                }
+            }
+        }
+    }
+
+    /* The norm autoscales over the drawn values unless vmin/vmax are given.
+       Under bins='log' it is a LogNorm, which ignores non-positive values when
+       autoscaling and paints them in the colormap's (transparent) bad colour. */
+    double vmin = amin;
+    double vmax = amax;
+    if (opt.log_bins) {
+        vmin = std::numeric_limits<double>::infinity();
+        vmax = -vmin;
+        for (const std::vector<double> *acc : {&counts1, &counts2}) {
+            for (double c : *acc) {
+                if (c > 0.0) {
+                    vmin = std::min(vmin, c);
+                    vmax = std::max(vmax, c);
+                }
+            }
+        }
+    }
+    if (opt.has_vlimits) {
+        vmin = opt.vmin;
+        vmax = opt.vmax;
+    }
+    const auto color_of = [&](double v) {
+        if (opt.log_bins) {
+            if (!(v > 0.0) || !(vmin > 0.0)) {
+                return Color::none();
+            }
+            return colormap_lookup(opt.cmap,
+                                   normalize(std::log10(v), std::log10(vmin), std::log10(vmax)));
+        }
+        return colormap_lookup(opt.cmap, normalize(v, vmin, vmax));
+    };
 
     /* Unit hexagon, scaled by (sx, sy/3) -- matplotlib's polygon table. */
     static const double kHex[6][2] = {
         {0.5, -0.5}, {0.5, 0.5}, {0.0, 1.0}, {-0.5, 0.5}, {-0.5, -0.5}, {0.0, -1.0}};
 
     auto emit = [&](double cx, double cy, double count) {
+        if (std::isnan(count)) {
+            return; /* mincnt (or an empty hexagon under C) drops it */
+        }
         auto patch = std::make_unique<PolyPatch>();
         for (int k = 0; k < 6; ++k) {
-            const double px = cx + kHex[k][0] * sx;
-            const double py = cy + kHex[k][1] * (sy / 3.0);
+            /* On a log axis the hexagon is regular in log space: 10 ** each
+               vertex, which the axis maps back to straight edges. */
+            double px = cx + kHex[k][0] * sx;
+            double py = cy + kHex[k][1] * (sy / 3.0);
+            if (opt.xlog) {
+                px = std::pow(10.0, px);
+            }
+            if (opt.ylog) {
+                py = std::pow(10.0, py);
+            }
             if (k == 0) {
                 patch->path.move_to(px, py);
             } else {
@@ -624,7 +1100,7 @@ void Axes::hexbin(const double *x, const double *y, std::size_t n, std::size_t g
             }
         }
         patch->path.close_poly();
-        patch->facecolor = colormap_lookup(Colormap::Viridis, normalize(count, vmin, vmax));
+        patch->facecolor = color_of(count);
         /*
          * Stroked in its own fill colour, which is hexbin's edgecolors="face".
          * Without it the antialiased boundary between two abutting hexagons is
@@ -656,8 +1132,101 @@ void Axes::hexbin(const double *x, const double *y, std::size_t n, std::size_t g
        than autoscaled so the hexagons' half-cell overhang does not widen them. */
     const double mx = 0.05 * (xmax - xmin);
     const double my = 0.05 * (ymax - ymin);
-    set_xlim(xmin - mx, xmax + mx);
-    set_ylim(ymin - my, ymax + my);
+    /* On a log axis the margin is taken in log space, as autoscale does. */
+    const auto out = [](bool log, double v) { return log ? std::pow(10.0, v) : v; };
+    if (opt.xlog) {
+        xscale = ScaleType::Log;
+    }
+    if (opt.ylog) {
+        yscale = ScaleType::Log;
+    }
+    set_xlim(out(opt.xlog, xmin - mx), out(opt.xlog, xmax + mx));
+    set_ylim(out(opt.ylog, ymin - my), out(opt.ylog, ymax + my));
+
+    if (!opt.marginals) {
+        return;
+    }
+
+    /* marginals: nx bars along x and 2 * ny along y, over the bin extent in
+       data units (geomspace on a log axis), each the reduction of C -- or of
+       ones, so a plain count gives every bar the value 1. A point goes to bin
+       searchsorted(edges, z) - 1, which drops one sitting on the first edge.
+       Without bins='log' each strip has its own Normalize, autoscaled over
+       its own values; with it they share the hexagons' LogNorm. */
+    for (const bool along_x : {true, false}) {
+        const bool log = along_x ? opt.xlog : opt.ylog;
+        const double zmin = out(log, along_x ? xmin : ymin);
+        const double zmax = out(log, along_x ? xmax : ymax);
+        const std::size_t nb = along_x ? static_cast<std::size_t>(nx)
+                                       : 2 * static_cast<std::size_t>(ny);
+        const double *z = along_x ? x_data : y_data;
+
+        std::vector<double> edges(nb + 1);
+        if (log) {
+            const double l0 = std::log10(zmin), l1 = std::log10(zmax);
+            const double step = (l1 - l0) / static_cast<double>(nb);
+            for (std::size_t k = 0; k <= nb; ++k) {
+                edges[k] = std::pow(10.0, l0 + static_cast<double>(k) * step);
+            }
+        } else {
+            const double step = (zmax - zmin) / static_cast<double>(nb);
+            for (std::size_t k = 0; k <= nb; ++k) {
+                edges[k] = zmin + static_cast<double>(k) * step;
+            }
+        }
+        edges.front() = zmin;
+        edges.back() = zmax;
+
+        std::vector<std::vector<double>> members(nb);
+        for (std::size_t i = 0; i < n; ++i) {
+            const auto pos = std::lower_bound(edges.begin(), edges.end(), z[i]) - edges.begin();
+            if (pos >= 1 && static_cast<std::size_t>(pos) <= nb) {
+                members[static_cast<std::size_t>(pos) - 1].push_back(opt.C != nullptr ? opt.C[i]
+                                                                                    : 1.0);
+            }
+        }
+        std::vector<double> values(nb, nan);
+        double bmin = std::numeric_limits<double>::infinity();
+        double bmax = -bmin;
+        for (std::size_t k = 0; k < nb; ++k) {
+            if (!members[k].empty()) {
+                values[k] = reduce_values(std::move(members[k]), opt.reduce);
+                if (!std::isnan(values[k])) {
+                    bmin = std::min(bmin, values[k]);
+                    bmax = std::max(bmax, values[k]);
+                }
+            }
+        }
+        for (std::size_t k = 0; k < nb; ++k) {
+            if (std::isnan(values[k])) {
+                continue;
+            }
+            auto bar = std::make_unique<PolyPatch>();
+            const double a = edges[k], b = edges[k + 1];
+            if (along_x) {
+                bar->path.move_to(a, 0.0);
+                bar->path.line_to(a, 0.05);
+                bar->path.line_to(b, 0.05);
+                bar->path.line_to(b, 0.0);
+                bar->y_in_axes = true;
+            } else {
+                bar->path.move_to(0.0, a);
+                bar->path.line_to(0.05, a);
+                bar->path.line_to(0.05, b);
+                bar->path.line_to(0.0, b);
+                bar->x_in_axes = true;
+            }
+            bar->path.close_poly();
+            bar->facecolor = opt.log_bins
+                                 ? color_of(values[k])
+                                 : colormap_lookup(opt.cmap, normalize(values[k], bmin, bmax));
+            bar->edgecolor = bar->facecolor; /* edgecolors="face" */
+            bar->linewidth = 1.0;
+            bar->join = JoinStyle::Round;
+            bar->counts_towards_limits = false;
+            patches.push_back(std::move(bar));
+        }
+    }
 }
 
 void Axes::hist2d(const double *x, const double *y, std::size_t n,
@@ -720,6 +1289,67 @@ void Axes::hist2d(const double *x, const double *y, std::size_t n,
     }
 
     pcolormesh(counts.data(), ybins, xbins, xedges.data(), yedges.data());
+}
+
+void Axes::pie(const double *values, std::size_t n, const PieOptions &opt)
+{
+    double sum = 0.0;
+    for (std::size_t i = 0; i < n; ++i) {
+        sum += values[i];
+    }
+    if (!(sum > 0.0)) {
+        return;
+    }
+
+    pie_wedges.clear();
+    std::size_t color_index = 0;
+    double theta1 = opt.startangle / 360.0; /* in turns, as matplotlib keeps it */
+    for (std::size_t i = 0; i < n; ++i) {
+        const double frac = opt.normalize ? values[i] / sum : values[i];
+        const double theta2 = opt.counterclock ? theta1 + frac : theta1 - frac;
+        const double thetam = 2.0 * 3.14159265358979323846 * 0.5 * (theta1 + theta2);
+        const double expl = opt.explode != nullptr ? opt.explode[i] : 0.0;
+        const double cx = opt.center_x + expl * std::cos(thetam);
+        const double cy = opt.center_y + expl * std::sin(thetam);
+        const double t1 = 360.0 * std::min(theta1, theta2);
+        const double t2 = 360.0 * std::max(theta1, theta2);
+        pie_wedges.push_back(PieWedge{t1, t2, cx, cy, opt.radius, frac});
+
+        /* Wedge: the unit arc and a line to the centre, closed, then scaled
+           by the radius and moved to the centre. */
+        Path unit = Path::arc(t1, t2);
+        unit.line_to(0.0, 0.0);
+        unit.close_poly();
+        auto patch = std::make_unique<PolyPatch>();
+        patch->path = unit;
+        for (std::size_t k = 0; k < unit.size(); ++k) {
+            if (!unit.codes.empty() && unit.codes[k] == CLOSEPOLY) {
+                continue;
+            }
+            patch->path.vertices[2 * k] = unit.vertices[2 * k] * opt.radius + cx;
+            patch->path.vertices[2 * k + 1] = unit.vertices[2 * k + 1] * opt.radius + cy;
+        }
+        if (!opt.colors.empty()) {
+            patch->facecolor = opt.colors[color_index++ % opt.colors.size()];
+        } else {
+            patch->facecolor = next_patch_color();
+        }
+        patch->clip = false;
+        patches.push_back(std::move(patch));
+        theta1 = theta2;
+    }
+
+    aspect = 1.0;
+    if (!opt.frame) {
+        spine_left = spine_right = spine_top = spine_bottom = false;
+        xticks_fixed.clear();
+        yticks_fixed.clear();
+        xticks_fixed_set = true;
+        yticks_fixed_set = true;
+        patch_visible = false;
+        set_xlim(-1.25 + opt.center_x, 1.25 + opt.center_x);
+        set_ylim(-1.25 + opt.center_y, 1.25 + opt.center_y);
+    }
 }
 
 void Axes::pie(const double *values, std::size_t n)
@@ -1191,26 +1821,87 @@ void band_cell(double x0, double y0, double x1, double y1,
     }
 }
 
+std::vector<double> Axes::auto_contour_levels(const double *values, std::size_t count,
+                                               std::size_t n, ContourExtend extend)
+{
+    double zmin = std::numeric_limits<double>::infinity();
+    double zmax = -zmin;
+    for (std::size_t i = 0; i < count; ++i) {
+        if (std::isfinite(values[i])) {
+            zmin = std::min(zmin, values[i]);
+            zmax = std::max(zmax, values[i]);
+        }
+    }
+    if (!(zmin <= zmax)) {
+        return {};
+    }
+
+    MaxNLocator locator;
+    locator.nbins = static_cast<int>((n == 0 ? 7 : n) + 1);
+    locator.min_n_ticks = 1;
+    /* A bare MaxNLocator's own steps, not AutoLocator's [1, 2, 2.5, 5, 10]. */
+    locator.steps = {1.0, 1.5, 2.0, 2.5, 3.0, 4.0, 5.0, 6.0, 8.0, 10.0};
+    const std::vector<double> lev = locator.tick_values(zmin, zmax);
+
+    /* Keep one level below zmin and one above zmax, no more. */
+    std::ptrdiff_t i0 = 0;
+    for (std::size_t k = 0; k < lev.size(); ++k) {
+        if (lev[k] < zmin) {
+            i0 = static_cast<std::ptrdiff_t>(k);
+        }
+    }
+    std::ptrdiff_t i1 = static_cast<std::ptrdiff_t>(lev.size());
+    for (std::size_t k = 0; k < lev.size(); ++k) {
+        if (lev[k] > zmax) {
+            i1 = static_cast<std::ptrdiff_t>(k) + 1;
+            break;
+        }
+    }
+    if (extend == ContourExtend::Min || extend == ContourExtend::Both) {
+        ++i0;
+    }
+    if (extend == ContourExtend::Max || extend == ContourExtend::Both) {
+        --i1;
+    }
+    if (i1 - i0 < 3) {
+        i0 = 0;
+        i1 = static_cast<std::ptrdiff_t>(lev.size());
+    }
+    return std::vector<double>(lev.begin() + i0, lev.begin() + i1);
+}
+
 ContourSet &Axes::contourf(const double *values, std::size_t rows, std::size_t cols,
                            const double *levels, std::size_t nlevels,
-                           double x0, double x1, double y0, double y1)
+                           double x0, double x1, double y0, double y1, ContourExtend extend)
 {
     ContourSet &cs = contour(values, rows, cols, levels, nlevels, x0, x1, y0, y1);
     cs.filled = true;
+    cs.extend = extend;
     cs.level_paths.clear(); /* filled contours draw no lines of their own */
 
     if (nlevels < 2 || rows < 2 || cols < 2) {
         return cs;
     }
 
+    /* matplotlib's _levels: an extended end gets a band reaching to
+       +/-1e250, past anything the data can hold. */
+    cs.band_levels = cs.levels;
+    if (extend == ContourExtend::Min || extend == ContourExtend::Both) {
+        cs.band_levels.insert(cs.band_levels.begin(), -1e250);
+    }
+    if (extend == ContourExtend::Max || extend == ContourExtend::Both) {
+        cs.band_levels.push_back(1e250);
+    }
+    const std::size_t nbands = cs.band_levels.size() - 1;
+
     const double dx = (cs.x1 - cs.x0) / static_cast<double>(cols - 1);
     const double dy = (cs.y1 - cs.y0) / static_cast<double>(rows - 1);
     auto value = [&](std::size_t r, std::size_t c) { return cs.values[r * cs.cols + c]; };
 
-    cs.band_paths.resize(nlevels - 1);
-    for (std::size_t b = 0; b + 1 < nlevels; ++b) {
-        const double lo = cs.levels[b];
-        const double hi = cs.levels[b + 1];
+    cs.band_paths.resize(nbands);
+    for (std::size_t b = 0; b < nbands; ++b) {
+        const double lo = cs.band_levels[b];
+        const double hi = cs.band_levels[b + 1];
         Path &path = cs.band_paths[b];
 
         for (std::size_t r = 0; r + 1 < rows; ++r) {
@@ -1358,18 +2049,31 @@ void Axes::indicate_inset(double x, double y, double width, double height,
 }
 
 void Axes::pie_label(const std::string *labels, std::size_t n, double distance,
-                     double fontsize)
+                     double fontsize, PieLabelAlign align, bool rotate)
 {
     /* A label per wedge, at `distance` of the radius along the wedge's middle
-       angle. The default 0.6 puts them inside the pie, so they are centred both
-       ways; matplotlib switches to outer alignment only past distance 1. */
+       angle from its own (possibly exploded) centre. The default 0.6 puts them
+       inside the pie, so they are centred both ways; auto switches to outer
+       alignment only past distance 1. */
+    if (align == PieLabelAlign::Auto) {
+        align = distance > 1.0 ? PieLabelAlign::Outer : PieLabelAlign::Center;
+    }
     const std::size_t count = std::min(n, pie_wedges.size());
     for (std::size_t i = 0; i < count; ++i) {
         const PieWedge &w = pie_wedges[i];
-        const double mid = 0.5 * (w.theta1 + w.theta2) * 3.14159265358979323846 / 180.0;
-        TextArtist &t = text(distance * std::cos(mid), distance * std::sin(mid), labels[i]);
-        t.halign = HAlign::Center;
+        const double mid = 2.0 * 3.14159265358979323846 * 0.5 * (w.theta1 + w.theta2) / 360.0;
+        const double xt = w.cx + distance * w.r * std::cos(mid);
+        const double yt = w.cy + distance * w.r * std::sin(mid);
+        TextArtist &t = text(xt, yt, labels[i]);
+        t.halign = align == PieLabelAlign::Outer ? (xt > 0.0 ? HAlign::Left : HAlign::Right)
+                                                 : HAlign::Center;
         t.valign = VAlign::Center;
+        if (rotate) {
+            if (align == PieLabelAlign::Outer) {
+                t.valign = yt > 0.0 ? VAlign::Bottom : VAlign::Top;
+            }
+            t.rotation = mid * 180.0 / 3.14159265358979323846 + (xt > 0.0 ? 0.0 : 180.0);
+        }
         t.size = fontsize;
     }
 }
@@ -1674,11 +2378,57 @@ void Axes::grouped_bar(const double *heights, std::size_t datasets, std::size_t 
     }
 }
 
-void Axes::xcorr(const double *x, const double *y, std::size_t n, int maxlags, bool normed)
+namespace
+{
+
+/* mlab.detrend_mean / detrend_linear on one series (a copy). */
+std::vector<double> detrended(const double *v, std::size_t n, SpectralDetrend how)
+{
+    std::vector<double> out(v, v + n);
+    if (how == SpectralDetrend::None || n == 0) {
+        return out;
+    }
+    double my = 0.0;
+    for (double d : out) {
+        my += d;
+    }
+    my /= static_cast<double>(n);
+    if (how == SpectralDetrend::Mean) {
+        for (double &d : out) {
+            d -= my;
+        }
+        return out;
+    }
+    /* Linear: the least-squares line over x = 0..n-1, from the biased
+       covariance as matplotlib computes it. */
+    const double mx = 0.5 * static_cast<double>(n - 1);
+    double sxx = 0.0;
+    double sxy = 0.0;
+    for (std::size_t i = 0; i < n; ++i) {
+        const double dx = static_cast<double>(i) - mx;
+        sxx += dx * dx;
+        sxy += dx * (out[i] - my);
+    }
+    const double b = sxx > 0.0 ? sxy / sxx : 0.0;
+    const double a = my - b * mx;
+    for (std::size_t i = 0; i < n; ++i) {
+        out[i] -= a + b * static_cast<double>(i);
+    }
+    return out;
+}
+
+} // namespace
+
+Line2D *Axes::xcorr(const double *xin, const double *yin, std::size_t n, int maxlags,
+                    bool normed, SpectralDetrend detrend, bool usevlines)
 {
     if (n == 0 || maxlags < 1 || static_cast<std::size_t>(maxlags) >= n) {
-        return;
+        return nullptr;
     }
+    const std::vector<double> xd = detrended(xin, n, detrend);
+    const std::vector<double> yd = detrended(yin, n, detrend);
+    const double *x = xd.data();
+    const double *y = yd.data();
 
     /* Plain cross-correlation (numpy's `correlate`, a direct sum, not a spectrum;
        no FFT). c[N - 1 + m] = sum_k x[k + m] * y[k], so index N - 1 is zero lag.
@@ -1723,16 +2473,25 @@ void Axes::xcorr(const double *x, const double *y, std::size_t n, int maxlags, b
         tops[i] = correls[lo + i];
     }
 
+    if (!usevlines) {
+        /* plot(lags, correls, marker='o', linestyle='None'). */
+        Line2D &line = plot(lags.data(), tops.data(), count);
+        line.marker = MarkerStyle::Circle;
+        line.linestyle = LineStyle::None;
+        return &line;
+    }
     /* usevlines=True: a stalk per lag from zero, and a rule along zero. */
     vlines(lags.data(), zeros.data(), tops.data(), count);
     axhline(0.0);
+    return nullptr;
 }
 
-void Axes::acorr(const double *x, std::size_t n, int maxlags, bool normed)
+Line2D *Axes::acorr(const double *x, std::size_t n, int maxlags, bool normed,
+                    SpectralDetrend detrend, bool usevlines)
 {
     /* Literally xcorr against itself -- which is how matplotlib defines it,
        and why the zero lag is always the maximum. */
-    xcorr(x, x, n, maxlags, normed);
+    return xcorr(x, x, n, maxlags, normed, detrend, usevlines);
 }
 
 namespace
@@ -2326,8 +3085,43 @@ SegmentCollection &Axes::triplot(const double *x, const double *y, std::size_t n
     return *segment_collections.back();
 }
 
+void Axes::triplot(const double *x, const double *y, std::size_t n,
+                   const std::vector<Triangle> &tris, const TriplotStyle &style)
+{
+    /* The edges: ax.plot of the NaN-separated edge list, marker 'None'. Its
+       colour is taken from the cycle even when there is no line to draw, as
+       ax.plot([], []) takes one. */
+    const Color edge_color = style.has_color ? style.color : next_line_color();
+    if (style.linestyle != LineStyle::None) {
+        auto sc = std::make_unique<SegmentCollection>();
+        sc->color = edge_color;
+        sc->linestyle = style.linestyle;
+        for (const auto &[u, v] : triangulation_edges(tris)) {
+            sc->path.move_to(x[u], y[u]);
+            sc->path.line_to(x[v], y[v]);
+        }
+        segment_collections.push_back(std::move(sc));
+    }
+
+    /* The nodes: every point, used by a triangle or not, linestyle 'None'. */
+    const Color node_color = style.has_color ? style.color : next_line_color();
+    if (style.marker != MarkerStyle::None) {
+        Line2D &line = push_line(lines, x, y, n);
+        line.color = node_color;
+        line.linestyle = LineStyle::None;
+        line.marker = style.marker;
+    }
+}
+
 ContourSet &Axes::tricontour(const double *x, const double *y, const double *z,
                              std::size_t n, const double *levels, std::size_t nlevels)
+{
+    return tricontour(x, y, z, n, delaunay(x, y, n), levels, nlevels);
+}
+
+ContourSet &Axes::tricontour(const double *x, const double *y, const double *z,
+                             std::size_t n, const std::vector<Triangle> &tris,
+                             const double *levels, std::size_t nlevels)
 {
     auto cs = std::make_unique<ContourSet>();
     cs->levels.assign(levels, levels + nlevels);
@@ -2345,11 +3139,9 @@ ContourSet &Axes::tricontour(const double *x, const double *y, const double *z,
     cs->y0 = ymin;
     cs->y1 = ymax;
 
-    const std::vector<Triangle> tris = delaunay(x, y, n);
-
     for (std::size_t k = 0; k < nlevels; ++k) {
         const double level = cs->levels[k];
-        Path &out = cs->level_paths[k];
+        std::vector<std::array<double, 4>> segs;
 
         for (const Triangle &t : tris) {
             const int v[3] = {t.a, t.b, t.c};
@@ -2358,32 +3150,49 @@ ContourSet &Axes::tricontour(const double *x, const double *y, const double *z,
                triangle, so there are either no crossings or exactly two. */
             double cx[3], cy[3];
             int found = 0;
+            int above = -1;
             for (int e = 0; e < 3; ++e) {
                 const int p = v[e];
                 const int q = v[(e + 1) % 3];
-                const double zp = z[p];
-                const double zq = z[q];
-                if (!std::isfinite(zp) || !std::isfinite(zq)) {
+                if (!std::isfinite(z[p]) || !std::isfinite(z[q])) {
                     found = 0;
                     break;
                 }
-                if ((zp > level) == (zq > level)) {
+                if (z[p] > level) {
+                    above = p;
+                }
+                if ((z[p] > level) == (z[q] > level)) {
                     continue;
                 }
-                const double denom = zq - zp;
-                const double s = std::fabs(denom) < 1e-300 ? 0.0 : (level - zp) / denom;
+                /* Interpolated from the lower index to the higher, so the two
+                   triangles sharing this edge get the very same point and
+                   chain_segments can join them on exact coordinates. */
+                const int lo = std::min(p, q);
+                const int hi = std::max(p, q);
+                const double denom = z[hi] - z[lo];
+                const double s = std::fabs(denom) < 1e-300 ? 0.0 : (level - z[lo]) / denom;
                 if (found < 3) {
-                    cx[found] = x[p] + s * (x[q] - x[p]);
-                    cy[found] = y[p] + s * (y[q] - y[p]);
+                    cx[found] = x[lo] + s * (x[hi] - x[lo]);
+                    cy[found] = y[lo] + s * (y[hi] - y[lo]);
                     ++found;
                 }
             }
 
-            if (found == 2) {
-                out.move_to(cx[0], cy[0]);
-                out.line_to(cx[1], cy[1]);
+            if (found == 2 && above >= 0) {
+                /* matplotlib's TriContourGenerator runs each line with the
+                   higher values on its left. */
+                const double cross = (cx[1] - cx[0]) * (y[above] - cy[0]) -
+                                     (cy[1] - cy[0]) * (x[above] - cx[0]);
+                if (cross >= 0.0) {
+                    segs.push_back({cx[0], cy[0], cx[1], cy[1]});
+                } else {
+                    segs.push_back({cx[1], cy[1], cx[0], cy[0]});
+                }
             }
         }
+        /* Joined into whole lines, so a dash pattern runs along the line
+           rather than restarting at every triangle. */
+        chain_segments(segs, {}, cs->level_paths[k]);
     }
 
     /* tricontour finishes with autoscale_view(tight=True), like contour. */
@@ -2435,20 +3244,38 @@ void clip_half(std::vector<BandPt> &poly, double level, bool keep_above)
 ContourSet &Axes::tricontourf(const double *x, const double *y, const double *z,
                               std::size_t n, const double *levels, std::size_t nlevels)
 {
-    ContourSet &cs = tricontour(x, y, z, n, levels, nlevels);
+    return tricontourf(x, y, z, n, delaunay(x, y, n), levels, nlevels,
+                       ContourExtend::Neither);
+}
+
+ContourSet &Axes::tricontourf(const double *x, const double *y, const double *z,
+                              std::size_t n, const std::vector<Triangle> &tris,
+                              const double *levels, std::size_t nlevels,
+                              ContourExtend extend)
+{
+    ContourSet &cs = tricontour(x, y, z, n, tris, levels, nlevels);
     cs.filled = true;
+    cs.extend = extend;
     cs.level_paths.clear(); /* filled contours draw no lines of their own */
 
     if (nlevels < 2) {
         return cs;
     }
 
-    const std::vector<Triangle> tris = delaunay(x, y, n);
+    /* As contourf: an extended end's band reaches to +/-1e250. */
+    cs.band_levels = cs.levels;
+    if (extend == ContourExtend::Min || extend == ContourExtend::Both) {
+        cs.band_levels.insert(cs.band_levels.begin(), -1e250);
+    }
+    if (extend == ContourExtend::Max || extend == ContourExtend::Both) {
+        cs.band_levels.push_back(1e250);
+    }
+    const std::size_t nbands = cs.band_levels.size() - 1;
 
-    cs.band_paths.resize(nlevels - 1);
-    for (std::size_t b = 0; b + 1 < nlevels; ++b) {
-        const double lo = cs.levels[b];
-        const double hi = cs.levels[b + 1];
+    cs.band_paths.resize(nbands);
+    for (std::size_t b = 0; b < nbands; ++b) {
+        const double lo = cs.band_levels[b];
+        const double hi = cs.band_levels[b + 1];
         Path &path = cs.band_paths[b];
 
         for (const Triangle &t : tris) {
@@ -2496,7 +3323,13 @@ void Axes::tripcolor(const double *x, const double *y, const double *z, std::siz
     for (const Triangle &t : tris) {
         facevals.push_back((z[t.a] + z[t.b] + z[t.c]) / 3.0);
     }
+    tripcolor(x, y, n, tris, facevals, TripcolorOptions{});
+}
 
+void Axes::tripcolor(const double *x, const double *y, std::size_t n,
+                     const std::vector<Triangle> &tris, const std::vector<double> &facevals,
+                     const TripcolorOptions &options)
+{
     double vmin = std::numeric_limits<double>::infinity();
     double vmax = -vmin;
     for (double v : facevals) {
@@ -2506,7 +3339,25 @@ void Axes::tripcolor(const double *x, const double *y, const double *z, std::siz
         vmin = std::min(vmin, v);
         vmax = std::max(vmax, v);
     }
-    if (!std::isfinite(vmin)) {
+    if (options.has_vlimits) {
+        vmin = options.vmin;
+        vmax = options.vmax;
+    }
+
+    /* update_datalim over every point, then the grid off, even when no
+       triangle survives the mask. */
+    if (n > 0) {
+        double x0 = x[0], x1 = x[0], y0 = y[0], y1 = y[0];
+        for (std::size_t i = 1; i < n; ++i) {
+            x0 = std::min(x0, x[i]);
+            x1 = std::max(x1, x[i]);
+            y0 = std::min(y0, y[i]);
+            y1 = std::max(y1, y[i]);
+        }
+        extra_datalim.push_back(Bbox(x0, y0, x1, y1));
+    }
+    xgrid_major = ygrid_major = xgrid_minor = ygrid_minor = false;
+    if (!std::isfinite(vmin) || !std::isfinite(vmax)) {
         return;
     }
 
@@ -2518,7 +3369,8 @@ void Axes::tripcolor(const double *x, const double *y, const double *z, std::siz
         patch->path.line_to(x[t.c], y[t.c]);
         patch->path.close_poly();
         patch->facecolor =
-            colormap_lookup(Colormap::Viridis, normalize(facevals[i], vmin, vmax));
+            colormap_lookup(options.cmap, normalize(facevals[i], vmin, vmax));
+        patch->alpha = options.alpha;
         /* No edge and no antialiasing: tripcolor's PolyCollection has empty
            edgecolor (linewidth 0, no stroke) and antialiased=False. The
            antialiasing, not a missing edge, is what veins an untreated mesh. */
@@ -2836,23 +3688,63 @@ double percentile(const std::vector<double> &sorted, double q)
 
 void Axes::bxp(const BoxStats *stats, std::size_t ngroups)
 {
+    bxp(stats, ngroups, BoxOptions{});
+}
+
+namespace
+{
+
+/* A position as matplotlib's FixedFormatter prints it: positions arrive as a
+   numpy array, so whole numbers from the default range print as integers and
+   anything else as Python's float repr ("0.5", "2.0"). */
+std::string position_label(double v, bool all_integral)
+{
+    char buf[64];
+    if (all_integral) {
+        std::snprintf(buf, sizeof(buf), "%.0f", v);
+        return buf;
+    }
+    for (int prec = 1; prec <= 17; ++prec) {
+        std::snprintf(buf, sizeof(buf), "%.*g", prec, v);
+        if (std::strtod(buf, nullptr) == v) {
+            break;
+        }
+    }
+    std::string s = buf;
+    if (s.find_first_of(".en") == std::string::npos) {
+        s += ".0";
+    }
+    return s;
+}
+
+} // namespace
+
+void Axes::bxp(const BoxStats *stats, std::size_t ngroups, const BoxOptions &opt)
+{
     if (ngroups == 0) {
         return;
     }
 
     const Color black = Color::rgb(0.0, 0.0, 0.0);
     const Color c1 = Color::rgb(1.0, 0.498039, 0.054902); /* the median, and only it */
+    const Color c2 = Color::rgb(0.172549, 0.627451, 0.172549); /* the mean */
 
-    /* Width follows the span of the positions, clipped to [0.15, 0.5], so boxes
-       do not shrink to threads as groups are added. */
-    const double span = static_cast<double>(ngroups) - 1.0;
-    const double width = std::min(std::max(0.15 * span, 0.15), 0.5);
-    const double half = width / 2.0;
-    const double cap_half = width / 4.0; /* capwidths defaults to half the box */
+    std::vector<double> positions(ngroups);
+    for (std::size_t g = 0; g < ngroups; ++g) {
+        positions[g] = opt.positions != nullptr ? opt.positions[g] : static_cast<double>(g) + 1.0;
+    }
+    const auto [pmin, pmax] = std::minmax_element(positions.begin(), positions.end());
+
+    /* Width follows the span (np.ptp) of the positions, clipped to [0.15, 0.5],
+       so boxes do not shrink to threads as groups are added. */
+    const double auto_width = std::min(std::max(0.15 * (*pmax - *pmin), 0.15), 0.5);
 
     for (std::size_t g = 0; g < ngroups; ++g) {
         const BoxStats &s = stats[g];
-        const double pos = static_cast<double>(g) + 1.0;
+        const double pos = positions[g];
+        const double width = opt.widths != nullptr ? opt.widths[g] : auto_width;
+        const double half = width / 2.0;
+        const double cap_half = width / 4.0; /* capwidths defaults to half the box */
 
         /* A group with no summary draws nothing but still holds its position,
            as matplotlib does (an empty group keeps its slot). */
@@ -2861,37 +3753,96 @@ void Axes::bxp(const BoxStats *stats, std::size_t ngroups)
         }
 
         /* Every piece is coloured explicitly, so none of them takes a turn of
-           the cycle -- a boxplot leaves the next plot() at C0. */
+           the cycle -- a boxplot leaves the next plot() at C0. `xs` run across
+           the box and `ys` along the data; horizontal swaps them, as
+           matplotlib's do_plot does. */
         auto add = [&](const double *xs, const double *ys, std::size_t m, Color c) -> Line2D & {
-            Line2D &l = push_line(lines, xs, ys, m);
+            Line2D &l = opt.horizontal ? push_line(lines, ys, xs, m) : push_line(lines, xs, ys, m);
             l.color = c;
             l.linewidth = 1.0;
             return l;
         };
 
-        /* matplotlib's order, because these overlap: whiskers, caps, box,
-           median, fliers. */
+        const double box_l = pos - half;
+        const double box_r = pos + half;
+        std::vector<double> bx = {box_l, box_r, box_r, box_l, box_l};
+        std::vector<double> by = {s.q1, s.q1, s.q3, s.q3, s.q1};
+        double med_l = box_l;
+        double med_r = box_r;
+        if (opt.shownotches) {
+            const double nl = pos - width * 0.25;
+            const double nr = pos + width * 0.25;
+            bx = {box_l, box_r, box_r, nr, box_r, box_r, box_l, box_l, nl, box_l, box_l};
+            by = {s.q1, s.q1, s.cilo, s.med, s.cihi, s.q3, s.q3, s.cihi, s.med, s.cilo, s.q1};
+            med_l = nl;
+            med_r = nr;
+        }
+
+        /* matplotlib's order, because these overlap: box, whiskers, caps,
+           median, mean, fliers. */
+        if (opt.showbox) {
+            if (opt.patch_artist) {
+                /* A PathPatch at zorder 2: C0 face, black edge, among the lines. */
+                auto box = std::make_unique<PolyPatch>();
+                for (std::size_t k = 0; k < bx.size(); ++k) {
+                    const double px = opt.horizontal ? by[k] : bx[k];
+                    const double py = opt.horizontal ? bx[k] : by[k];
+                    if (k == 0) {
+                        box->path.move_to(px, py);
+                    } else if (k + 1 < bx.size()) {
+                        box->path.line_to(px, py);
+                    }
+                }
+                box->path.close_poly();
+                box->facecolor = Color::rgb(0.121569, 0.466667, 0.705882);
+                box->edgecolor = black;
+                box->linewidth = 1.0;
+                box->line_tier = true;
+                patches.push_back(std::move(box));
+            } else {
+                add(bx.data(), by.data(), bx.size(), black);
+            }
+        }
+
         const double wx[2] = {pos, pos};
         const double wlo[2] = {s.q1, s.whislo};
         const double whi[2] = {s.q3, s.whishi};
         add(wx, wlo, 2, black);
         add(wx, whi, 2, black);
 
-        const double cx[2] = {pos - cap_half, pos + cap_half};
-        const double clo[2] = {s.whislo, s.whislo};
-        const double chi[2] = {s.whishi, s.whishi};
-        add(cx, clo, 2, black);
-        add(cx, chi, 2, black);
+        if (opt.showcaps) {
+            const double cx[2] = {pos - cap_half, pos + cap_half};
+            const double clo[2] = {s.whislo, s.whislo};
+            const double chi[2] = {s.whishi, s.whishi};
+            add(cx, clo, 2, black);
+            add(cx, chi, 2, black);
+        }
 
-        const double bx[5] = {pos - half, pos + half, pos + half, pos - half, pos - half};
-        const double by[5] = {s.q1, s.q1, s.q3, s.q3, s.q1};
-        add(bx, by, 5, black);
-
-        const double mx[2] = {pos - half, pos + half};
+        const double mx[2] = {med_l, med_r};
         const double my[2] = {s.med, s.med};
-        add(mx, my, 2, c1);
+        add(mx, my, 2, c1).butt_cap = true;
 
-        if (!s.fliers.empty()) {
+        if (opt.showmeans && std::isfinite(s.mean)) {
+            if (opt.meanline) {
+                const double lx[2] = {box_l, box_r};
+                const double ly[2] = {s.mean, s.mean};
+                Line2D &ml = add(lx, ly, 2, c2);
+                ml.linestyle = LineStyle::Dashed;
+                ml.butt_cap = true;
+            } else {
+                const double px[1] = {pos};
+                const double py[1] = {s.mean};
+                Line2D &ml = add(px, py, 1, c2);
+                ml.linestyle = LineStyle::None;
+                ml.marker = MarkerStyle::TriangleUp;
+                ml.has_markerfacecolor = true;
+                ml.markerfacecolor = c2;
+                ml.has_markeredgecolor = true;
+                ml.markeredgecolor = c2;
+            }
+        }
+
+        if (opt.showfliers && !s.fliers.empty()) {
             std::vector<double> fx(s.fliers.size(), pos);
             Line2D &fl = add(fx.data(), s.fliers.data(), s.fliers.size(), black);
             fl.linestyle = LineStyle::None;
@@ -2905,17 +3856,39 @@ void Axes::bxp(const BoxStats *stats, std::size_t ngroups)
         }
     }
 
-    /* Half a unit either side of the outermost box, pinned rather than
-       autoscaled, with a tick per group. */
-    set_xlim(0.5, static_cast<double>(ngroups) + 0.5);
-    xticks_fixed.clear();
-    for (std::size_t g = 0; g < ngroups; ++g) {
-        xticks_fixed.push_back(static_cast<double>(g) + 1.0);
+    if (!opt.manage_ticks) {
+        return;
     }
-    xticks_fixed_set = true;
+    /* Half a unit either side of the outermost box, pinned rather than
+       autoscaled, with a tick per box labelled by its position. */
+    bool all_integral = true;
+    for (double p : positions) {
+        all_integral = all_integral && p == std::floor(p);
+    }
+    std::vector<double> &ticks = opt.horizontal ? yticks_fixed : xticks_fixed;
+    std::vector<std::string> &tick_labels = opt.horizontal ? yticklabels_fixed : xticklabels_fixed;
+    ticks = positions;
+    tick_labels.clear();
+    for (std::size_t g = 0; g < ngroups; ++g) {
+        tick_labels.push_back(opt.labels != nullptr ? opt.labels[g]
+                                                    : position_label(positions[g], all_integral));
+    }
+    if (opt.horizontal) {
+        set_ylim(*pmin - 0.5, *pmax + 0.5);
+        yticks_fixed_set = true;
+    } else {
+        set_xlim(*pmin - 0.5, *pmax + 0.5);
+        xticks_fixed_set = true;
+    }
 }
 
 void Axes::boxplot(const double *values, const std::size_t *counts, std::size_t ngroups)
+{
+    boxplot(values, counts, ngroups, BoxOptions{});
+}
+
+void Axes::boxplot(const double *values, const std::size_t *counts, std::size_t ngroups,
+                   const BoxOptions &opt, double whis, const double *whis_percentiles)
 {
     if (ngroups == 0) {
         return;
@@ -2955,10 +3928,26 @@ void Axes::boxplot(const double *values, const std::size_t *counts, std::size_t 
         s.q3 = percentile(sorted, 0.75);
         const double iqr = s.q3 - s.q1;
 
-        /* The whisker reaches the furthest datum within 1.5 IQR, not 1.5 IQR
-           itself, so it always ends on a real observation. */
-        const double lo_bound = s.q1 - 1.5 * iqr;
-        const double hi_bound = s.q3 + 1.5 * iqr;
+        double sum = 0.0;
+        for (double v : sorted) {
+            sum += v;
+        }
+        s.mean = sum / static_cast<double>(sorted.size());
+        /* _compute_conf_interval without bootstrap: the notch is the median
+           +/- 1.57 IQR / sqrt(N). */
+        const double notch = 1.57 * iqr / std::sqrt(static_cast<double>(sorted.size()));
+        s.cilo = s.med - notch;
+        s.cihi = s.med + notch;
+
+        /* The whisker reaches the furthest datum within whis IQR (or inside
+           the given percentiles), not the bound itself, so it always ends on a
+           real observation. */
+        const double lo_bound = whis_percentiles != nullptr
+                                    ? percentile(sorted, whis_percentiles[0] / 100.0)
+                                    : s.q1 - whis * iqr;
+        const double hi_bound = whis_percentiles != nullptr
+                                    ? percentile(sorted, whis_percentiles[1] / 100.0)
+                                    : s.q3 + whis * iqr;
         s.whislo = s.q1;
         s.whishi = s.q3;
         for (double v : sorted) {
@@ -2978,116 +3967,235 @@ void Axes::boxplot(const double *values, const std::size_t *counts, std::size_t 
         stats.push_back(std::move(s));
     }
 
-    bxp(stats.data(), stats.size());
+    bxp(stats.data(), stats.size(), opt);
 }
 
-void Axes::violinplot(const double *values, const std::size_t *counts, std::size_t ngroups)
+namespace
+{
+
+/* numpy's percentile with the default linear interpolation, on sorted data. */
+double percentile_sorted(const std::vector<double> &s, double q)
+{
+    const double pos = q * static_cast<double>(s.size() - 1);
+    const std::size_t lo = static_cast<std::size_t>(std::floor(pos));
+    const std::size_t hi = std::min(lo + 1, s.size() - 1);
+    const double frac = pos - static_cast<double>(lo);
+    return s[lo] + (s[hi] - s[lo]) * frac;
+}
+
+} // namespace
+
+void Axes::violinplot(const double *values, const std::size_t *counts, std::size_t ngroups,
+                      const ViolinOptions &opt)
 {
     if (ngroups == 0) {
         return;
     }
 
-    /* One colour for the whole call, from the line cycle: all violins in a call
-       share it, only the next call advances. */
-    const Color color = next_line_color();
-    const double width = 0.5;
-
-    constexpr std::size_t kPoints = 100;
-
+    /* violin_stats: per group, the KDE over linspace(min, max, points) plus
+       the summary values. */
+    struct Stats
+    {
+        std::vector<double> coords, vals;
+        double mean, median, min, max;
+        std::vector<double> quantiles;
+        bool present = false;
+    };
+    std::vector<Stats> stats(ngroups);
     std::size_t offset = 0;
+    std::size_t qoffset = 0;
+    const std::size_t points = opt.points < 2 ? 2 : opt.points;
     for (std::size_t g = 0; g < ngroups; ++g) {
-        const std::size_t n = counts[g];
         std::vector<double> d;
-        d.reserve(n);
-        for (std::size_t i = 0; i < n; ++i) {
+        for (std::size_t i = 0; i < counts[g]; ++i) {
             if (std::isfinite(values[offset + i])) {
                 d.push_back(values[offset + i]);
             }
         }
-        offset += n;
-        if (d.size() < 2) {
+        offset += counts[g];
+        const std::size_t nq = opt.quantile_counts != nullptr ? opt.quantile_counts[g] : 0;
+        const double *q = opt.quantiles != nullptr ? opt.quantiles + qoffset : nullptr;
+        qoffset += nq;
+        if (d.empty()) {
             continue;
         }
-
-        double lo = d[0];
-        double hi = d[0];
+        Stats &st = stats[g];
+        st.present = true;
+        std::vector<double> sorted = d;
+        std::sort(sorted.begin(), sorted.end());
+        st.min = sorted.front();
+        st.max = sorted.back();
         double sum = 0.0;
         for (double v : d) {
-            lo = std::min(lo, v);
-            hi = std::max(hi, v);
             sum += v;
         }
-        const double mean = sum / static_cast<double>(d.size());
+        st.mean = sum / static_cast<double>(d.size());
+        st.median = percentile_sorted(sorted, 0.5);
+        for (std::size_t k = 0; k < nq; ++k) {
+            st.quantiles.push_back(percentile_sorted(sorted, q[k]));
+        }
 
-        /* Scott's rule at ddof=1: the sample variance, divided by n - 1 (the
-           population variance would shift every bandwidth by sqrt(n / (n - 1))). */
+        st.coords.resize(points);
+        st.vals.assign(points, 0.0);
+        const double step = (st.max - st.min) / static_cast<double>(points - 1);
+        for (std::size_t k = 0; k < points; ++k) {
+            st.coords[k] = static_cast<double>(k) * step + st.min;
+        }
+        st.coords[points - 1] = st.max;
+
+        if (st.min == st.max) {
+            /* A constant dataset: 1 exactly at the value, as violin_stats has it. */
+            for (std::size_t k = 0; k < points; ++k) {
+                st.vals[k] = st.coords[k] == d[0] ? 1.0 : 0.0;
+            }
+            continue;
+        }
+        /* GaussianKDE: the sample variance (ddof=1) times factor^2. */
         double ss = 0.0;
         for (double v : d) {
-            ss += (v - mean) * (v - mean);
+            ss += (v - st.mean) * (v - st.mean);
         }
-        const double var = ss / static_cast<double>(d.size() - 1);
-        const double factor = std::pow(static_cast<double>(d.size()), -0.2);
+        const double nn = static_cast<double>(d.size());
+        const double var = ss / (nn - 1.0);
+        double factor = std::pow(nn, -0.2);
+        if (opt.bandwidth == ViolinOptions::Bandwidth::Silverman) {
+            factor = std::pow(nn * 3.0 / 4.0, -0.2);
+        } else if (opt.bandwidth == ViolinOptions::Bandwidth::Scalar) {
+            factor = opt.bw_factor;
+        }
         const double covariance = var * factor * factor;
-        if (!(covariance > 0.0) || hi <= lo) {
+        if (!(covariance > 0.0)) {
             continue;
         }
-
-        const double norm =
-            std::sqrt(2.0 * 3.14159265358979323846 * covariance) * static_cast<double>(d.size());
-
-        std::vector<double> ys(kPoints);
-        std::vector<double> dens(kPoints);
-        double peak = 0.0;
-        for (std::size_t k = 0; k < kPoints; ++k) {
-            const double y =
-                lo + (hi - lo) * static_cast<double>(k) / static_cast<double>(kPoints - 1);
+        const double norm = std::sqrt(2.0 * 3.14159265358979323846 * covariance) * nn;
+        for (std::size_t k = 0; k < points; ++k) {
             double acc = 0.0;
             for (double v : d) {
-                const double diff = y - v;
+                const double diff = st.coords[k] - v;
                 acc += std::exp(-0.5 * diff * diff / covariance);
             }
-            ys[k] = y;
-            dens[k] = acc / norm;
-            peak = std::max(peak, dens[k]);
+            st.vals[k] = acc / norm;
         }
-        if (!(peak > 0.0)) {
+    }
+
+    std::vector<double> positions(ngroups), widths(ngroups);
+    for (std::size_t g = 0; g < ngroups; ++g) {
+        positions[g] = opt.positions != nullptr ? opt.positions[g] : static_cast<double>(g) + 1.0;
+        widths[g] = opt.widths != nullptr ? opt.widths[g] : opt.width;
+    }
+
+    /* One cycle colour for the whole call, drawn only if a colour is unset. */
+    Color next = Color::none();
+    if (opt.facecolors.empty() || opt.linecolors.empty()) {
+        next = next_line_color();
+    }
+    const auto pick = [](const std::vector<Color> &list, std::size_t g, Color fallback) {
+        return list.empty() ? fallback : list[g % list.size()];
+    };
+
+    const bool low = opt.side != ViolinOptions::Side::High;
+    const bool high = opt.side != ViolinOptions::Side::Low;
+    const bool one_sided = opt.side != ViolinOptions::Side::Both;
+
+    /* A point in (along, across) violin coordinates, laid out for the
+       orientation: vertical violins run along y. */
+    const auto at = [&](Path &p, bool move, double along, double across) {
+        const double px = opt.horizontal ? along : across;
+        const double py = opt.horizontal ? across : along;
+        if (move) {
+            p.move_to(px, py);
+        } else {
+            p.line_to(px, py);
+        }
+    };
+
+    for (std::size_t g = 0; g < ngroups; ++g) {
+        const Stats &st = stats[g];
+        if (!st.present) {
             continue;
         }
-
-        /* Scaled so each violin's widest point is `width` across, half either
-           side of the position. Each group scales by its own peak, so a narrow
-           group is not squashed by a tall one. */
-        const double pos = static_cast<double>(g) + 1.0;
-        for (std::size_t k = 0; k < kPoints; ++k) {
-            dens[k] = 0.5 * width * dens[k] / peak;
+        double peak = 0.0;
+        for (double v : st.vals) {
+            peak = std::max(peak, v);
         }
-
+        std::vector<double> half(points, 0.0);
+        if (peak > 0.0) {
+            for (std::size_t k = 0; k < points; ++k) {
+                half[k] = 0.5 * widths[g] * st.vals[k] / peak;
+            }
+        }
+        const double pos = positions[g];
         auto body = std::make_unique<PolyPatch>();
-        body->path.move_to(pos - dens[0], ys[0]);
-        for (std::size_t k = 1; k < kPoints; ++k) {
-            body->path.line_to(pos - dens[k], ys[k]);
+        at(body->path, true, st.coords[0], low ? pos - half[0] : pos);
+        for (std::size_t k = 1; k < points; ++k) {
+            at(body->path, false, st.coords[k], low ? pos - half[k] : pos);
         }
-        for (std::size_t k = kPoints; k-- > 0;) {
-            body->path.line_to(pos + dens[k], ys[k]);
+        for (std::size_t k = points; k-- > 0;) {
+            at(body->path, false, st.coords[k], high ? pos + half[k] : pos);
         }
         body->path.close_poly();
-        body->facecolor = color;
-        body->alpha = 0.3;
+        body->facecolor = pick(opt.facecolors, g, next);
+        body->alpha = opt.facecolors.empty() ? 0.3 : 1.0;
         patches.push_back(std::move(body));
+    }
 
-        /* The bars across the extremes are half the violin's full width, and
-           the spine runs the whole way between them. */
+    /* The line collections in matplotlib's order: means, maxes, mins, bars,
+       medians, quantiles -- each across every violin. */
+    const auto perp = [&](const std::function<bool(std::size_t, std::vector<double> &)> &values_of) {
+        auto lines = std::make_unique<SegmentCollection>();
+        bool any = false;
+        for (std::size_t g = 0; g < ngroups; ++g) {
+            std::vector<double> vs;
+            if (!stats[g].present || !values_of(g, vs)) {
+                continue;
+            }
+            const double a = positions[g] + (low ? -0.25 : 0.0) * widths[g];
+            const double b = positions[g] + (high ? 0.25 : 0.0) * widths[g];
+            for (double v : vs) {
+                at(lines->path, true, v, a);
+                at(lines->path, false, v, b);
+                any = true;
+            }
+        }
+        if (!any) {
+            return;
+        }
+        /* A LineCollection takes one colour per segment; with one colour per
+           violin they agree unless linecolors cycles, which the first wins. */
+        lines->color = pick(opt.linecolors, 0, next);
+        lines->cap = one_sided ? CapStyle::Projecting : CapStyle::Butt;
+        segment_collections.push_back(std::move(lines));
+    };
+    if (opt.showmeans) {
+        perp([&](std::size_t g, std::vector<double> &v) { v = {stats[g].mean}; return true; });
+    }
+    if (opt.showextrema) {
+        perp([&](std::size_t g, std::vector<double> &v) { v = {stats[g].max}; return true; });
+        perp([&](std::size_t g, std::vector<double> &v) { v = {stats[g].min}; return true; });
         auto bars = std::make_unique<SegmentCollection>();
-        const double bar_half = width / 4.0;
-        bars->path.move_to(pos - bar_half, lo);
-        bars->path.line_to(pos + bar_half, lo);
-        bars->path.move_to(pos - bar_half, hi);
-        bars->path.line_to(pos + bar_half, hi);
-        bars->path.move_to(pos, lo);
-        bars->path.line_to(pos, hi);
-        bars->color = color;
+        for (std::size_t g = 0; g < ngroups; ++g) {
+            if (!stats[g].present) {
+                continue;
+            }
+            at(bars->path, true, stats[g].min, positions[g]);
+            at(bars->path, false, stats[g].max, positions[g]);
+        }
+        bars->color = pick(opt.linecolors, 0, next);
+        bars->cap = one_sided ? CapStyle::Projecting : CapStyle::Butt;
         segment_collections.push_back(std::move(bars));
     }
+    if (opt.showmedians) {
+        perp([&](std::size_t g, std::vector<double> &v) { v = {stats[g].median}; return true; });
+    }
+    perp([&](std::size_t g, std::vector<double> &v) {
+        v = stats[g].quantiles;
+        return !v.empty();
+    });
+}
+
+void Axes::violinplot(const double *values, const std::size_t *counts, std::size_t ngroups)
+{
+    violinplot(values, counts, ngroups, ViolinOptions{});
 }
 
 ReferenceLine &Axes::axhline(double y)
@@ -3346,6 +4454,11 @@ Bbox Axes::data_limits() const
 
     for (const std::unique_ptr<Line2D> &line_ptr : lines) {
         const Line2D &line = *line_ptr;
+        /* errorbar(fmt='none') never adds its data line, so only the bars
+           (below) reach the limits. */
+        if (line.errorbars_only) {
+            continue;
+        }
         const std::size_t n = std::min(line.xdata.size(), line.ydata.size());
         for (std::size_t i = 0; i < n; ++i) {
             const double x = line.xdata[i];
@@ -3381,22 +4494,33 @@ Bbox Axes::data_limits() const
         }
     }
 
+    /* The bars are hlines/vlines collections in matplotlib, so each one
+       counts with both ends and its position across -- but only where
+       errorevery drew one. */
     for (const std::unique_ptr<Line2D> &line_ptr : lines) {
         const Line2D &line = *line_ptr;
         const std::size_t n =
             std::min(std::min(line.xdata.size(), line.ydata.size()), line.xerr.size());
         for (std::size_t i = 0; i < n; ++i) {
+            if (!line.error_drawn(i)) {
+                continue;
+            }
             const double x = line.xdata[i];
-            const double e = std::fabs(line.xerr[i]);
-            if (!std::isfinite(x) || !std::isfinite(e)) {
+            const double lo = line.xerr_lo(i);
+            const double hi = line.xerr_hi(i);
+            if (!std::isfinite(x) || !std::isfinite(lo) || !std::isfinite(hi)) {
                 continue;
             }
-            if (xscale == ScaleType::Log && !(x - e > 0.0)) {
-                xmax = std::max(xmax, x + e);
+            if (line.errorbars_only && std::isfinite(line.ydata[i])) {
+                ymin = std::min(ymin, line.ydata[i]);
+                ymax = std::max(ymax, line.ydata[i]);
+            }
+            if (xscale == ScaleType::Log && !(x - lo > 0.0)) {
+                xmax = std::max(xmax, x + hi);
                 continue;
             }
-            xmin = std::min(xmin, x - e);
-            xmax = std::max(xmax, x + e);
+            xmin = std::min(xmin, x - lo);
+            xmax = std::max(xmax, x + hi);
         }
     }
 
@@ -3407,17 +4531,25 @@ Bbox Axes::data_limits() const
         const std::size_t n =
             std::min(std::min(line.xdata.size(), line.ydata.size()), line.yerr.size());
         for (std::size_t i = 0; i < n; ++i) {
+            if (!line.error_drawn(i)) {
+                continue;
+            }
             const double y = line.ydata[i];
-            const double e = std::fabs(line.yerr[i]);
-            if (!std::isfinite(y) || !std::isfinite(e)) {
+            const double lo = line.yerr_lo(i);
+            const double hi = line.yerr_hi(i);
+            if (!std::isfinite(y) || !std::isfinite(lo) || !std::isfinite(hi)) {
                 continue;
             }
-            if (yscale == ScaleType::Log && !(y - e > 0.0)) {
-                ymax = std::max(ymax, y + e);
+            if (line.errorbars_only && std::isfinite(line.xdata[i])) {
+                xmin = std::min(xmin, line.xdata[i]);
+                xmax = std::max(xmax, line.xdata[i]);
+            }
+            if (yscale == ScaleType::Log && !(y - lo > 0.0)) {
+                ymax = std::max(ymax, y + hi);
                 continue;
             }
-            ymin = std::min(ymin, y - e);
-            ymax = std::max(ymax, y + e);
+            ymin = std::min(ymin, y - lo);
+            ymax = std::max(ymax, y + hi);
         }
     }
 
@@ -3807,22 +4939,29 @@ void Axes::draw_spans(Renderer &renderer, const Bbox &box)
     }
 }
 
-void Axes::draw_patches(Renderer &renderer, const Bbox &box, double px_per_pt)
+void Axes::draw_patches(Renderer &renderer, const Bbox &box, double px_per_pt,
+                        bool line_tier)
 {
     const Affine2D to_display = scale_to_display(box);
+    const Bbox view = view_limits();
+    const double vx0 = scale_x(view.x0), vx1 = scale_x(view.x1);
+    const double vy0 = scale_y(view.y0), vy1 = scale_y(view.y1);
 
     for (const std::unique_ptr<PolyPatch> &patch : patches) {
-        if (patch->path.size() == 0) {
+        if (patch->path.size() == 0 || patch->line_tier != line_tier) {
             continue;
         }
 
-        /* Vertices are pre-transformed into scale space, same as lines. */
+        /* Vertices are pre-transformed into scale space, same as lines; an
+           axes-fraction coordinate is placed across the view instead. */
         Path scaled;
         scaled.codes = patch->path.codes;
         scaled.vertices.reserve(patch->path.vertices.size());
         for (std::size_t i = 0; i < patch->path.size(); ++i) {
-            scaled.vertices.push_back(scale_x(patch->path.vertices[2 * i]));
-            scaled.vertices.push_back(scale_y(patch->path.vertices[2 * i + 1]));
+            const double px = patch->path.vertices[2 * i];
+            const double py = patch->path.vertices[2 * i + 1];
+            scaled.vertices.push_back(patch->x_in_axes ? vx0 + px * (vx1 - vx0) : scale_x(px));
+            scaled.vertices.push_back(patch->y_in_axes ? vy0 + py * (vy1 - vy0) : scale_y(py));
         }
 
         GraphicsContext gc;
@@ -3831,7 +4970,7 @@ void Axes::draw_patches(Renderer &renderer, const Bbox &box, double px_per_pt)
         gc.linewidth = patch->linewidth;
         gc.join = patch->join;
         gc.antialiased = patch->antialiased;
-        gc.has_cliprect = true;
+        gc.has_cliprect = patch->clip;
         gc.cliprect = box;
 
         renderer.draw_path(gc, scaled, to_display, &patch->facecolor);
@@ -4300,11 +5439,15 @@ void Axes::clabel(ContourSet &cs)
     cs.labeled = true;
 }
 
-void Axes::draw_contours(Renderer &renderer, const Bbox &box, double px_per_pt)
+void Axes::draw_contours(Renderer &renderer, const Bbox &box, double px_per_pt,
+                         bool line_tier)
 {
     const Affine2D to_display = scale_to_display(box);
 
     for (const std::unique_ptr<ContourSet> &cs : contours) {
+        if (cs->filled == line_tier) {
+            continue;
+        }
         for (std::size_t b = 0; b < cs->band_paths.size(); ++b) {
             const Path &src = cs->band_paths[b];
             if (src.size() == 0) {
@@ -4323,8 +5466,12 @@ void Axes::draw_contours(Renderer &renderer, const Bbox &box, double px_per_pt)
                whole level range. */
             Color face = cs->color;
             if (!cs->has_color) {
+                /* An extended band's midpoint is near +/-5e249, which clamps
+                   to the colormap's end -- the under/over colour. */
+                const std::vector<double> &edges =
+                    cs->band_levels.empty() ? cs->levels : cs->band_levels;
                 const double span = cs->levels.back() - cs->levels.front();
-                const double mid = (cs->levels[b] + cs->levels[b + 1]) / 2.0;
+                const double mid = (edges[b] + edges[b + 1]) / 2.0;
                 const double t = span == 0.0 ? 0.5 : (mid - cs->levels.front()) / span;
                 face = colormap_lookup(cs->cmap, t);
             }
@@ -4379,10 +5526,19 @@ void Axes::draw_contours(Renderer &renderer, const Bbox &box, double px_per_pt)
             GraphicsContext gc;
             gc.color = color;
             gc.linewidth = cs->linewidth;
-            gc.cap = CapStyle::Round;
+            /* A Collection with no capstyle of its own: the GraphicsContext
+               default, butt. It shows at line ends and on every dash. */
+            gc.cap = CapStyle::Butt;
             gc.join = JoinStyle::Round;
             gc.has_cliprect = true;
             gc.cliprect = box;
+            /* A monochrome set draws its negative levels in
+               contour.negative_linestyle, 'dashed'. */
+            if (cs->has_color && cs->levels[i] < 0.0) {
+                for (const auto &[on, off] : dash_pattern(LineStyle::Dashed, cs->linewidth)) {
+                    gc.dashes.emplace_back(on, off);
+                }
+            }
 
             if (!cs->labeled) {
                 renderer.draw_path(gc, scaled, to_display, nullptr);
@@ -4582,6 +5738,29 @@ void Axes::draw_quivers(Renderer &renderer, const Bbox &box, double px_per_pt)
         const double width_px = width * box.width();
         const double denom = scale * width;
 
+        GraphicsContext gc;
+        gc.color = Color::none();
+        gc.linewidth = 0.0; /* quiver sets linewidths=(0,) */
+        gc.join = JoinStyle::Round;
+        gc.has_cliprect = true;
+        gc.cliprect = box;
+
+        /* With C, the norm autoscales over the finite values of C. */
+        const bool mapped = !q.c.empty();
+        double cmin = q.vmin;
+        double cmax = q.vmax;
+        if (mapped && !q.has_vlimits) {
+            cmin = std::numeric_limits<double>::infinity();
+            cmax = -cmin;
+            for (double cv : q.c) {
+                if (std::isfinite(cv)) {
+                    cmin = std::min(cmin, cv);
+                    cmax = std::max(cmax, cv);
+                }
+            }
+        }
+        const bool per_arrow = mapped || !q.colors.empty();
+
         Path path;
         for (std::size_t i = 0; i < n; ++i) {
             const Point p = to_display(Point{scale_x(q.x[i]), scale_y(q.y[i])});
@@ -4593,20 +5772,30 @@ void Axes::draw_quivers(Renderer &renderer, const Bbox &box, double px_per_pt)
             /* angles='uv': direction in data units, so an arrow keeps its angle
                when the axes aspect changes. */
             const double theta = std::atan2(q.v[i], q.u[i]);
-            arrow_path(q, p.x, p.y, length, theta, width_px, path);
+            if (!per_arrow) {
+                arrow_path(q, p.x, p.y, length, theta, width_px, path);
+                continue;
+            }
+            /* A PolyCollection with one facecolour per arrow: each arrow is its
+               own path, in the order given. */
+            Path one;
+            arrow_path(q, p.x, p.y, length, theta, width_px, one);
+            if (one.size() == 0) {
+                continue;
+            }
+            Color face = q.color;
+            if (mapped) {
+                face = i < q.c.size() ? colormap_lookup(q.cmap, normalize(q.c[i], cmin, cmax))
+                                      : Color::none();
+            } else {
+                face = q.colors[i % q.colors.size()];
+            }
+            renderer.draw_path(gc, one, Affine2D(), &face);
         }
 
-        if (path.size() == 0) {
-            continue;
+        if (path.size() != 0) {
+            renderer.draw_path(gc, path, Affine2D(), &q.color);
         }
-
-        GraphicsContext gc;
-        gc.color = Color::none();
-        gc.linewidth = 0.0; /* quiver sets linewidths=(0,) */
-        gc.join = JoinStyle::Round;
-        gc.has_cliprect = true;
-        gc.cliprect = box;
-        renderer.draw_path(gc, path, Affine2D(), &q.color);
     }
 
     for (const std::unique_ptr<StreamPlot> &sp : streams) {
@@ -5296,7 +6485,7 @@ void Axes::draw_segments(Renderer &renderer, const Bbox &box)
         gc.linewidth = sc.linewidth;
         /* A Collection takes butt caps and miter joins, not a Line2D's round ones,
            so an hlines rule has square ends. */
-        gc.cap = CapStyle::Butt;
+        gc.cap = sc.cap;
         gc.join = JoinStyle::Miter;
         gc.has_cliprect = true;
         gc.cliprect = box;
@@ -5330,162 +6519,280 @@ void Axes::draw_lines(Renderer &renderer, const Bbox &box)
             path.vertices.push_back(scale_y(line.ydata[i]));
         }
 
-        if (line.linestyle != LineStyle::None && n >= 2) {
-            GraphicsContext gc;
-            gc.color = line.color;
-            gc.linewidth = line.linewidth;
-            /* lines.solid_capstyle (projecting) vs lines.dash_capstyle (butt):
-               matplotlib picks per line via is_dashed(). A round cap on a dashed
-               line lengthens each dash by a half-linewidth bump at both ends. Join
-               stays round either way (both dash and solid joinstyle default
-               round). */
-            gc.cap = line.linestyle == LineStyle::Solid ? CapStyle::Projecting
-                                                        : CapStyle::Butt;
-            gc.join = JoinStyle::Round;
-            gc.has_cliprect = true;
-            gc.cliprect = box;
+        /* The data line and its markers: zorder 2.1 over the bars by
+           default, 1.9 under them with barsabove. */
+        const auto draw_data = [&]() {
+            if (line.linestyle != LineStyle::None && n >= 2) {
+                GraphicsContext gc;
+                gc.color = line.color;
+                gc.linewidth = line.linewidth;
+                /* lines.solid_capstyle (projecting) vs lines.dash_capstyle (butt):
+                   matplotlib picks per line via is_dashed(). A round cap on a dashed
+                   line lengthens each dash by a half-linewidth bump at both ends. Join
+                   stays round either way (both dash and solid joinstyle default
+                   round). */
+                gc.cap = line.linestyle == LineStyle::Solid && !line.butt_cap
+                             ? CapStyle::Projecting
+                             : CapStyle::Butt;
+                gc.join = JoinStyle::Round;
+                gc.has_cliprect = true;
+                gc.cliprect = box;
 
-            for (const auto &[on, off] : line.dashes()) {
-                gc.dashes.emplace_back(on, off);
+                for (const auto &[on, off] : line.dashes()) {
+                    gc.dashes.emplace_back(on, off);
+                }
+
+                path.should_simplify = n > 128;
+                renderer.draw_path(gc, path, to_display, nullptr);
             }
 
-            path.should_simplify = n > 128;
-            renderer.draw_path(gc, path, to_display, nullptr);
-        }
+            if (line.marker == MarkerStyle::None) {
+                return;
+            }
 
-        /* Horizontal whiskers, the mirror of the vertical ones below. */
-        if (!line.xerr.empty()) {
-            const double elw = (line.elinewidth > 0.0 ? line.elinewidth : line.linewidth);
+            /* Handed to the renderer as one marker plus the points to stamp it at, so
+               the raster backend rasterizes the shape once; vector backends fall back
+               to one path per point. */
+            const Path unit = marker_path(line.marker);
+            const double half = 0.5 * line.markersize * px_per_pt;
+
+            const Color face =
+                line.has_markerfacecolor ? line.markerfacecolor : line.color;
+            const Color edge =
+                line.has_markeredgecolor ? line.markeredgecolor : line.color;
+            const bool filled = marker_is_filled(line.marker);
+
+            /* Line2D.draw: the marker's own join, butt caps, and snapping
+               decided by its size against the marker's snap threshold. */
+            GraphicsContext mgc;
+            mgc.color = edge;
+            mgc.linewidth = line.markeredgewidth;
+            mgc.cap = CapStyle::Butt;
+            mgc.join = marker_join(line.marker);
+            mgc.snap = line.markersize * px_per_pt >= marker_snap_threshold(line.marker)
+                           ? GraphicsContext::Snap::On
+                           : GraphicsContext::Snap::Off;
+            mgc.has_cliprect = true;
+            mgc.cliprect = box;
+
+            Path points;
+            points.vertices.reserve(2 * n);
+            for (std::size_t i = 0; i < n; ++i) {
+                const Point p =
+                    to_display(Point{scale_x(line.xdata[i]), scale_y(line.ydata[i])});
+                if (!std::isfinite(p.x) || !std::isfinite(p.y)) {
+                    continue;
+                }
+                points.move_to(p.x, p.y);
+            }
+
+            renderer.draw_markers(mgc, unit, Affine2D::scale(half, half), points, Affine2D(),
+                                  filled ? &face : nullptr);
+        };
+
+        const auto draw_errorbars = [&]() {
+            if (line.xerr.empty() && line.yerr.empty()) {
+                return;
+            }
             const double cap = line.capsize * px_per_pt;
 
             GraphicsContext egc;
-            egc.color = line.color;
-            egc.linewidth = elw;
+            egc.color = line.has_ecolor ? line.ecolor : line.color;
+            egc.linewidth = line.elinewidth > 0.0 ? line.elinewidth : line.linewidth;
             egc.cap = CapStyle::Butt;
             egc.has_cliprect = true;
             egc.cliprect = box;
+            for (const auto &[on, off] : dash_pattern(line.elinestyle, egc.linewidth)) {
+                egc.dashes.emplace_back(on, off);
+            }
 
             /* capthick defaults to markeredgewidth, not to the bar's width. */
             GraphicsContext cgc = egc;
-            cgc.linewidth = line.markeredgewidth;
+            cgc.linewidth = line.capthick >= 0.0 ? line.capthick : line.markeredgewidth;
+            /* The cap markers' snap threshold is 1 px, so any visible cap snaps. */
+            cgc.snap = 2.0 * cap >= 1.0 ? GraphicsContext::Snap::On : GraphicsContext::Snap::Off;
 
-            const std::size_t m = std::min(n, line.xerr.size());
-            for (std::size_t i = 0; i < m; ++i) {
+            /* matplotlib adds the x bars, then the y bars, then all the caps. */
+            struct Bar
+            {
+                Point lo, hi;
+                bool vertical;
+                bool limited; /* a lolims/uplims point: no end caps */
+            };
+            std::vector<Bar> bars;
+
+            /* The caps and carets lose the bars' dashes. */
+            cgc.dashes.clear();
+
+            /* Horizontal whiskers, the mirror of the vertical ones. */
+            const std::size_t mx = std::min(n, line.xerr.size());
+            for (std::size_t i = 0; i < mx; ++i) {
                 const double xv = line.xdata[i];
-                const double e = std::fabs(line.xerr[i]);
-                if (!std::isfinite(xv) || !std::isfinite(e) || e == 0.0) {
+                const double elo = line.xerr_lo(i);
+                const double ehi = line.xerr_hi(i);
+                if (!line.error_drawn(i) || !std::isfinite(xv) || !std::isfinite(elo) ||
+                    !std::isfinite(ehi) || (elo == 0.0 && ehi == 0.0)) {
                     continue;
                 }
-
                 const double sy = scale_y(line.ydata[i]);
-                const Point lo = to_display(Point{scale_x(xv - e), sy});
-                const Point hi = to_display(Point{scale_x(xv + e), sy});
+                const Point lo = to_display(Point{scale_x(xv - elo), sy});
+                const Point hi = to_display(Point{scale_x(xv + ehi), sy});
                 if (!std::isfinite(lo.x) || !std::isfinite(hi.x)) {
                     continue;
                 }
-
-                renderer.draw_path(egc, Path::segment(lo.x, lo.y, hi.x, hi.y), Affine2D(),
-                                   nullptr);
-
-                if (cap > 0.0) {
-                    /* A cap is a '|' marker of markersize 2 * capsize, so it
-                       reaches a whole capsize either side, stroked at
-                       markeredgewidth. Drawn as a segment rather than stamped as a
-                       marker, so it is not snapped to a whole pixel as matplotlib's
-                       is. */
-                    renderer.draw_path(cgc, Path::segment(lo.x, lo.y - cap, lo.x, lo.y + cap),
-                                       Affine2D(), nullptr);
-                    renderer.draw_path(cgc, Path::segment(hi.x, hi.y - cap, hi.x, hi.y + cap),
-                                       Affine2D(), nullptr);
-                }
+                bars.push_back(Bar{lo, hi, false,
+                                   Line2D::flag(line.xlolims, i) ||
+                                       Line2D::flag(line.xuplims, i)});
             }
-        }
 
-        /* Error bars sit under the markers, so a marker never disappears
-           behind its own whisker. */
-        if (!line.yerr.empty()) {
-            const double elw =
-                (line.elinewidth > 0.0 ? line.elinewidth : line.linewidth);
-            const double cap = line.capsize * px_per_pt;
-
-            GraphicsContext egc;
-            egc.color = line.color;
-            egc.linewidth = elw;
-            egc.cap = CapStyle::Butt;
-            egc.has_cliprect = true;
-            egc.cliprect = box;
-
-            /* capthick defaults to markeredgewidth, not to the bar's width. */
-            GraphicsContext cgc = egc;
-            cgc.linewidth = line.markeredgewidth;
-
-            const std::size_t m = std::min(n, line.yerr.size());
-            for (std::size_t i = 0; i < m; ++i) {
+            const std::size_t my = std::min(n, line.yerr.size());
+            for (std::size_t i = 0; i < my; ++i) {
                 const double y = line.ydata[i];
-                const double e = std::fabs(line.yerr[i]);
-                if (!std::isfinite(y) || !std::isfinite(e) || e == 0.0) {
+                const double elo = line.yerr_lo(i);
+                const double ehi = line.yerr_hi(i);
+                if (!line.error_drawn(i) || !std::isfinite(y) || !std::isfinite(elo) ||
+                    !std::isfinite(ehi) || (elo == 0.0 && ehi == 0.0)) {
                     continue;
                 }
-
                 const double sx = scale_x(line.xdata[i]);
-                const Point lo = to_display(Point{sx, scale_y(y - e)});
-                const Point hi = to_display(Point{sx, scale_y(y + e)});
+                const Point lo = to_display(Point{sx, scale_y(y - elo)});
+                const Point hi = to_display(Point{sx, scale_y(y + ehi)});
                 if (!std::isfinite(lo.y) || !std::isfinite(hi.y)) {
                     continue;
                 }
+                bars.push_back(Bar{lo, hi, true,
+                                   Line2D::flag(line.lolims, i) || Line2D::flag(line.uplims, i)});
+            }
 
-                renderer.draw_path(egc, Path::segment(lo.x, lo.y, hi.x, hi.y), Affine2D(),
-                                   nullptr);
+            for (const Bar &bar : bars) {
+                renderer.draw_path(egc, Path::segment(bar.lo.x, bar.lo.y, bar.hi.x, bar.hi.y),
+                                   Affine2D(), nullptr);
+            }
 
-                /* errorbar.capsize is 0 by default, so caps are opt-in. A cap
-                   is an '_' marker of markersize 2 * capsize: it reaches a
-                   whole capsize either side, at markeredgewidth. */
-                if (cap > 0.0) {
-                    renderer.draw_path(cgc, Path::segment(lo.x - cap, lo.y, lo.x + cap, lo.y),
-                                       Affine2D(), nullptr);
-                    renderer.draw_path(cgc, Path::segment(hi.x - cap, hi.y, hi.x + cap, hi.y),
-                                       Affine2D(), nullptr);
+            /* errorbar.capsize is 0 by default, so caps are opt-in. A cap is a
+               '|' (x bars) or '_' (y bars) marker of markersize 2 * capsize: it
+               reaches a whole capsize either side, at capthick. Stamped through
+               draw_markers as matplotlib's caplines are, which snaps each one to
+               the pixel grid; x caps go down before y caps. */
+            /* Limit carets: an unfilled CARET*BASE marker, base on the bar's
+               end, at markersize 2 * capsize (or lines.markersize without
+               caps), mitred, snapped from 3 px. */
+            const double caret_px = (cap > 0.0 ? 2.0 * line.capsize : 6.0) * px_per_pt;
+            GraphicsContext kgc = cgc;
+            kgc.join = JoinStyle::Miter;
+            kgc.snap = caret_px >= 3.0 ? GraphicsContext::Snap::On : GraphicsContext::Snap::Off;
+            const auto caret = [](bool vertical, bool positive) {
+                Path p;
+                if (vertical && positive) { /* CARETUPBASE */
+                    p.move_to(0.5, 0.0);
+                    p.line_to(0.0, 0.75);
+                    p.line_to(-0.5, 0.0);
+                } else if (vertical) { /* CARETDOWNBASE */
+                    p.move_to(-0.5, 0.0);
+                    p.line_to(0.0, -0.75);
+                    p.line_to(0.5, 0.0);
+                } else if (positive) { /* CARETRIGHTBASE */
+                    p.move_to(0.0, -0.5);
+                    p.line_to(0.75, 0.0);
+                    p.line_to(0.0, 0.5);
+                } else { /* CARETLEFTBASE */
+                    p.move_to(0.0, 0.5);
+                    p.line_to(-0.75, 0.0);
+                    p.line_to(0.0, -0.5);
+                }
+                return p;
+            };
+            const auto stamp_caps = [&](const Path &ends, bool vertical) {
+                if (cap <= 0.0 || ends.size() == 0) {
+                    return;
+                }
+                const Path unit = vertical ? Path::segment(-1.0, 0.0, 1.0, 0.0)
+                                           : Path::segment(0.0, -1.0, 0.0, 1.0);
+                renderer.draw_markers(cgc, unit, Affine2D::scale(cap, cap), ends, Affine2D(),
+                                      nullptr);
+            };
+
+            /* Per axis, x first: the plain caps, then each limit kind's carets
+               followed by its caps at the data point -- matplotlib's caplines. */
+            for (const bool vertical : {false, true}) {
+                Path ends;
+                for (const Bar &bar : bars) {
+                    if (bar.vertical == vertical && !bar.limited) {
+                        ends.move_to(bar.lo.x, bar.lo.y);
+                        ends.move_to(bar.hi.x, bar.hi.y);
+                    }
+                }
+                stamp_caps(ends, vertical);
+
+                const std::vector<double> &err = vertical ? line.yerr : line.xerr;
+                const std::size_t m = std::min(n, err.size());
+                for (const bool upper_limit : {false, true}) {
+                    const std::vector<std::uint8_t> &flags =
+                        vertical ? (upper_limit ? line.uplims : line.lolims)
+                                 : (upper_limit ? line.xuplims : line.xlolims);
+                    if (flags.empty()) {
+                        continue;
+                    }
+                    Path tips[2]; /* by display direction: [0] negative, [1] positive */
+                    Path points;
+                    for (std::size_t i = 0; i < m; ++i) {
+                        if (!Line2D::flag(flags, i) || !line.error_drawn(i)) {
+                            continue;
+                        }
+                        const double xv = line.xdata[i];
+                        const double yv = line.ydata[i];
+                        /* lolims sits at high = dep + upper extent; uplims at
+                           low = dep - lower extent. */
+                        double ext;
+                        if (vertical) {
+                            ext = upper_limit ? -line.yerr_lo(i) : line.yerr_hi(i);
+                        } else {
+                            ext = upper_limit ? -line.xerr_lo(i) : line.xerr_hi(i);
+                        }
+                        if (!std::isfinite(xv) || !std::isfinite(yv) || !std::isfinite(ext)) {
+                            continue;
+                        }
+                        const Point at = to_display(Point{scale_x(xv), scale_y(yv)});
+                        const Point tip =
+                            vertical ? to_display(Point{scale_x(xv), scale_y(yv + ext)})
+                                     : to_display(Point{scale_x(xv + ext), scale_y(yv)});
+                        if (!std::isfinite(at.x) || !std::isfinite(at.y) ||
+                            !std::isfinite(tip.x) || !std::isfinite(tip.y)) {
+                            continue;
+                        }
+                        /* The caret points on along the bar: towards larger
+                           data values for lolims, smaller for uplims, flipped
+                           on an inverted axis. */
+                        const double d = vertical ? tip.y - at.y : tip.x - at.x;
+                        const bool positive = d != 0.0 ? d > 0.0 : !upper_limit;
+                        tips[positive ? 1 : 0].move_to(tip.x, tip.y);
+                        points.move_to(at.x, at.y);
+                    }
+                    /* "Unfilled" in name only: the cap line keeps fillstyle
+                       'full', so draw_markers fills the open V (closing it) in
+                       the data line's colour, then strokes it in ecolor. */
+                    for (const bool positive : {false, true}) {
+                        if (tips[positive ? 1 : 0].size() != 0) {
+                            renderer.draw_markers(kgc, caret(vertical, positive),
+                                                  Affine2D::scale(caret_px, caret_px),
+                                                  tips[positive ? 1 : 0], Affine2D(),
+                                                  &line.color);
+                        }
+                    }
+                    stamp_caps(points, vertical);
                 }
             }
+        };
+
+        if (!line.barsabove) {
+            draw_errorbars();
         }
-
-        if (line.marker == MarkerStyle::None) {
-            continue;
+        if (!line.errorbars_only) {
+            draw_data();
         }
-
-        /* Handed to the renderer as one marker plus the points to stamp it at, so
-           the raster backend rasterizes the shape once; vector backends fall back
-           to one path per point. */
-        const Path unit = marker_path(line.marker);
-        const double half = 0.5 * line.markersize * px_per_pt;
-
-        const Color face =
-            line.has_markerfacecolor ? line.markerfacecolor : line.color;
-        const Color edge =
-            line.has_markeredgecolor ? line.markeredgecolor : line.color;
-        const bool filled = marker_is_filled(line.marker);
-
-        GraphicsContext mgc;
-        mgc.color = edge;
-        mgc.linewidth = line.markeredgewidth;
-        mgc.cap = CapStyle::Round;
-        mgc.join = JoinStyle::Round;
-        mgc.has_cliprect = true;
-        mgc.cliprect = box;
-
-        Path points;
-        points.vertices.reserve(2 * n);
-        for (std::size_t i = 0; i < n; ++i) {
-            const Point p =
-                to_display(Point{scale_x(line.xdata[i]), scale_y(line.ydata[i])});
-            if (!std::isfinite(p.x) || !std::isfinite(p.y)) {
-                continue;
-            }
-            points.move_to(p.x, p.y);
+        if (line.barsabove) {
+            draw_errorbars();
         }
-
-        renderer.draw_markers(mgc, unit, Affine2D::scale(half, half), points, Affine2D(),
-                              filled ? &face : nullptr);
     }
 }
 
@@ -6140,6 +7447,11 @@ void Axes::draw_legend(Renderer &renderer, const Bbox &box, double px_per_pt)
             GraphicsContext mgc;
             mgc.color = edge;
             mgc.linewidth = edge_width;
+            mgc.cap = CapStyle::Butt;
+            mgc.join = marker_join(marker);
+            mgc.snap = diameter_pt * px_per_pt >= marker_snap_threshold(marker)
+                           ? GraphicsContext::Snap::On
+                           : GraphicsContext::Snap::Off;
             /* Through draw_markers, like the data: the legend's handle is a Line2D
                too, so its marker is stamped at a whole pixel the same way. */
             Path at;
@@ -6229,7 +7541,7 @@ void Axes::draw(Renderer &renderer)
     /* The patch/collection tier: Patch.zorder and Collection's base zorder are
        both 1, so contours, spans, bars/fills and scatter-like collections sit
        together on one side of the 1.5 boundary. */
-    draw_contours(renderer, box, px_per_pt);
+    draw_contours(renderer, box, px_per_pt, /*line_tier=*/false);
     draw_spans(renderer, box);
     draw_patches(renderer, box, px_per_pt);
     draw_collections(renderer, box, px_per_pt);
@@ -6242,7 +7554,9 @@ void Axes::draw(Renderer &renderer)
 
     /* The line tier: Line2D and LineCollection are both zorder 2. */
     draw_reference_lines(renderer, box, px_per_pt);
+    draw_contours(renderer, box, px_per_pt, /*line_tier=*/true);
     draw_segments(renderer, box);
+    draw_patches(renderer, box, px_per_pt, /*line_tier=*/true);
     draw_lines(renderer, box);
     draw_quivers(renderer, box, px_per_pt);
 

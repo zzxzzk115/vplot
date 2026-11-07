@@ -14,10 +14,12 @@
 #define VPL_CORE_MARKERS_H
 
 #include <cmath>
+#include <limits>
 #include <utility>
 #include <vector>
 
 #include "path.h"
+#include "renderer.h" /* JoinStyle */
 
 namespace vpl
 {
@@ -70,6 +72,41 @@ inline bool marker_is_filled(MarkerStyle marker)
 {
     return marker != MarkerStyle::Plus && marker != MarkerStyle::Cross &&
            marker != MarkerStyle::None;
+}
+
+/* MarkerStyle's joinstyle: round for the circle and the strokes, miter for
+   the polygons, bevel for the star. (Every marker's capstyle is butt.) */
+inline JoinStyle marker_join(MarkerStyle marker)
+{
+    switch (marker) {
+        case MarkerStyle::Square:
+        case MarkerStyle::TriangleUp:
+        case MarkerStyle::TriangleDown:
+        case MarkerStyle::Diamond:
+            return JoinStyle::Miter;
+        case MarkerStyle::Star:
+            return JoinStyle::Bevel;
+        default:
+            return JoinStyle::Round;
+    }
+}
+
+/* MarkerStyle's snap threshold in pixels: Line2D snaps a marker to the pixel
+   grid when it is at least this wide, and never snaps a circle. */
+inline double marker_snap_threshold(MarkerStyle marker)
+{
+    switch (marker) {
+        case MarkerStyle::Square: return 2.0;
+        case MarkerStyle::Plus: return 1.0;
+        case MarkerStyle::Cross: return 3.0;
+        case MarkerStyle::TriangleUp:
+        case MarkerStyle::TriangleDown:
+        case MarkerStyle::Diamond:
+        case MarkerStyle::Star:
+            return 5.0;
+        default:
+            return std::numeric_limits<double>::infinity();
+    }
 }
 
 inline Path marker_path(MarkerStyle marker)

@@ -62,6 +62,87 @@ int main()
             auto a = f2.subplots();
             std::vector<double> s{1.0, 2.0, 2.5, 3.0, 4.0, 9.0};
             a.hist(s, 5);                                  // ax.hist(s, bins=5)
+            a.hist(s, {.bins = 4, .histtype = VplHistType_Step});  // histtype="step"
+            a.errorbar({0, 1, 2}, {1, 2, 1},                  // ax.errorbar(x, y,
+                       {.yerr = {{0.1, 0.2, 0.1}, {0.3, 0.1, 0.2}}, //   yerr=[lo, hi],
+                        .fmt = "o", .capsize = 2, .errorevery = 2});  //   fmt="o", ...)
+            a.errorbar({0, 1, 2}, {1, 2, 1}, {.xerr = {{0.2, 0.2, 0.2}}, .fmt = "none"});
+            a.errorbar({0, 1, 2}, {1, 2, 1},                  // errorbar(..., lolims=, elinestyle='--')
+                       {.yerr = {{0.3, 0.3, 0.3}},
+                        .elinestyle = VplLineStyle_Dashed,
+                        .lolims = {1, 0, 1}});
+            {
+                vplot::Figure pf;
+                auto pa = pf.subplots();
+                pa.pie({1, 2, 3}, {.explode = {0, 0.1, 0}, .labels = {"a", "b", "c"},
+                                   .autopct = "%1.0f%%", .startangle = 90});
+                pa.pie_label({"x", "y", "z"}, 1.2, 9.0, VplPieLabelAlign_Outer, true);
+            }
+            a.set_anchor("SW");                            // ax.set_anchor("SW")
+            {
+                const std::vector<double> tx{0, 1, 1, 0}, ty{0, 0, 1, 1}, tz{0, 1, 2, 1};
+                vplot::Triangulation tri{{{0, 1, 2}, {0, 2, 3}}, {0, 1}};
+                a.triplot(tx, ty, tri, "go-");               // triplot(x, y, triangles, "go-", mask=)
+                a.tricontour(tx, ty, tz, tri);               // tricontour(tri, z)
+                a.tricontourf(tx, ty, tz, tri, {}, 4, VplContourExtend_Both);
+                a.tripcolor(tx, ty, {0.2, 0.8}, tri, VplColormap_Plasma, true);
+                if (vplot::triangulate(tx, ty).size() != 2) {
+                    throw std::runtime_error("triangulate: a square is two triangles");
+                }
+            }
+            a.quiver({0, 1}, {0, 1}, {1, 0}, {0, 1}, {0.2, 0.9}, VplColormap_Plasma);  // quiver(X, Y, U, V, C)
+            {
+                VplBoxDesc bd{};
+                bd.showMeans = 1;
+                bd.showNotches = 1;
+                a.boxplot({{1, 2, 3, 4, 9}, {2, 3, 3, 4}}, bd);  // boxplot(d, notch=True, showmeans=True)
+                VplBoxStats st{};
+                st.structSize = sizeof(st);
+                st.q1 = 1;
+                st.median = 2;
+                st.q3 = 3;
+                st.whisLo = 0;
+                st.whisHi = 4;
+                VplBoxDesc bd2{};
+                bd2.showMeans = 1;
+                a.bxp({st}, bd2, {2.5});                     // bxp(stats, showmeans=True)
+            }
+            a.acorr({1, 3, 2, 5, 4, 6, 5, 8}, 0, true, VplSpectralDetrend_Linear, false);  // acorr(x, detrend=..., usevlines=False)
+            {
+                VplViolinDesc vd{};
+                vd.showMedians = 1;
+                vd.side = VplViolinSide_High;
+                a.violinplot({{1, 2, 2, 3}, {2, 3, 3, 5}}, vd);  // violinplot(d, showmedians=True, side="high")
+            }
+            {
+                VplHexbinDesc hd{};
+                hd.gridsizeX = 5;
+                hd.mincnt = 1;
+                hd.reduce = VplHexReduce_Sum;
+                a.hexbin({0, 1, 2, 3}, {0, 1, 0, 1}, hd, {1, 2, 3, 4});  // hexbin(x, y, C, ...)
+                hd.marginals = 1;
+                a.hexbin({0, 1, 2, 3}, {0, 1, 0, 1}, hd, {1, 2, 3, 4});  // hexbin(..., marginals=True)
+            }
+            {
+                std::vector<double> zz;
+                for (int i = 0; i < 25; ++i) {
+                    zz.push_back(static_cast<double>(i % 5) * 0.5 + i / 5);
+                }
+                auto cs = a.contourf(zz, 5, 5, 6, VplContourExtend_Both);  // contourf(Z, 6, extend="both")
+                if (cs.levels().empty()) {                     // cs.levels
+                    std::fprintf(stderr, "contourf(Z, n) chose no levels\n");
+                    return 1;
+                }
+                a.contour(zz, 5, 5);                           // ax.contour(Z)
+            }
+            vplot::HistResult hr;
+            auto hp = a.hist({s, {2.0, 3.0}}, {.bins = 3, .stacked = true},
+                             {{.label = "a"}, {.label = "b"}}, {}, &hr);
+            if (hp.size() != 2 || hr.tops.size() != 6 || hr.edges.size() != 4 ||
+                hr.tops[3] != 6.0) {                       // n, bins = ax.hist([s, t], ...)
+                std::fprintf(stderr, "hist([a, b]) returned the wrong n or bins\n");
+                return 1;
+            }
             auto bars = a.bar_patch({0, 1, 2}, {1, 2, 3}, 0.6);  // returns a handle
             a.bar_label(bars);                             // ax.bar_label(bars)
             a.step({0, 1, 2}, {1, 3, 2}, "post");          // ax.step(..., where="post")

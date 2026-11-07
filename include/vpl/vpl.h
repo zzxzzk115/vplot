@@ -341,6 +341,69 @@ VPL_API VplResult VPL_CALL vplAxesErrorBar(VplAxes *axes,
                                            const VplLineDesc *desc,
                                            VplLine **outLine);
 
+/* errorbar's keyword arguments beyond the data. Zero-initialised (with
+   structSize set) it is errorbar's defaults. */
+typedef struct VplErrorBarDesc
+{
+    size_t structSize;
+
+    /* Cap half-length in points; 0 draws no caps (errorbar.capsize). */
+    double capsize;
+    /* Cap stroke width in points; 0 follows the marker edge width. */
+    double capthick;
+    /* Bar stroke width in points; 0 follows the line's own width. */
+    double elinewidth;
+
+    /* ecolor: the bars' colour. hasEColor takes eColor; a non-NULL
+       eColorSpec ("C2", "tab:red", "0.5") takes precedence. Unset follows
+       the data line's colour. */
+    int32_t hasEColor;
+    float eColor[4];
+    const char *eColorSpec;
+
+    /* errorevery=(offset, step): bars on every step-th point starting at
+       offset. A step of 0 means 1, every point. */
+    size_t errorEveryOffset;
+    size_t errorEveryStep;
+
+    /* Non-zero draws the bars over the data line and markers. */
+    int32_t barsAbove;
+
+    /* Added later, so read only when structSize covers them. */
+    /* elinestyle: the bars' line style (solid by default). */
+    VplLineStyle eLineStyle;
+    /* lolims, uplims, xlolims, xuplims: `count` flags each, or NULL. A
+       non-zero lolims flag marks y as a LOWER limit: its bar runs upward only
+       and ends in a caret pointing up (uplims: downward; x likewise). With
+       capsize > 0 a cap also marks the data point. */
+    const uint8_t *lolims;
+    const uint8_t *uplims;
+    const uint8_t *xlolims;
+    const uint8_t *xuplims;
+} VplErrorBarDesc;
+
+/* The general error bar: asymmetric bars in either or both directions --
+   errorbar(x, y, yerr=[lower, upper], xerr=..., fmt=..., errorevery=...).
+
+   Each direction takes a lower (or left) and an upper (or right) array of
+   `count` non-negative extents. Pass upper = NULL for symmetric bars, and
+   both NULL for no bars in that direction. NaN skips that point's bar.
+
+   `desc` styles the data line exactly as for vplAxesPlot, and its format
+   string may be "none" -- matplotlib's fmt='none' -- to draw only the bars,
+   which then default to C0 as matplotlib's do. `eb` may be NULL. */
+VPL_API VplResult VPL_CALL vplAxesErrorBarFull(VplAxes *axes,
+                                               const double *x,
+                                               const double *y,
+                                               size_t count,
+                                               const double *yerrLower,
+                                               const double *yerrUpper,
+                                               const double *xerrLower,
+                                               const double *xerrUpper,
+                                               const VplErrorBarDesc *eb,
+                                               const VplLineDesc *desc,
+                                               VplLine **outLine);
+
 typedef enum VplPatchField
 {
     VplPatchField_FaceColor = 1u << 0,
@@ -462,6 +525,86 @@ VPL_API VplResult VPL_CALL vplAxesHist(VplAxes *axes,
                                        int32_t density,
                                        const VplPatchDesc *desc,
                                        VplPatch **outPatch);
+
+/* hist's histtype. Bar puts several datasets side by side in each bin;
+   BarStacked piles them up (and implies stacked); Step is an unfilled outline
+   drawn with the lines; StepFilled the same outline, filled. */
+typedef enum VplHistType
+{
+    VplHistType_Bar = 0,
+    VplHistType_BarStacked = 1,
+    VplHistType_Step = 2,
+    VplHistType_StepFilled = 3,
+} VplHistType;
+
+/* Where each bar sits relative to its bin -- hist's align. */
+typedef enum VplHistAlign
+{
+    VplHistAlign_Mid = 0,
+    VplHistAlign_Left = 1,
+    VplHistAlign_Right = 2,
+} VplHistAlign;
+
+/* hist's keyword arguments. Zero-initialised (with structSize set) it is
+   hist(x) exactly: ten equal bins over the data's range, raw counts, bars. */
+typedef struct VplHistDesc
+{
+    size_t structSize;
+
+    /* Equal-width bins; 0 means ten. Ignored when binEdges is given. */
+    size_t bins;
+    /* Explicit, strictly increasing bin edges (binEdgeCount of them, at least
+       two), for bins of unequal width. NULL to use `bins`. */
+    const double *binEdges;
+    size_t binEdgeCount;
+
+    /* hasRange non-zero bins over [rangeMin, rangeMax] instead of the data's
+       own range; values outside it are not counted. */
+    int32_t hasRange;
+    double rangeMin;
+    double rangeMax;
+
+    /* Non-zero normalises to unit area (with `stacked`, the whole stack). */
+    int32_t density;
+    /* 0 off; positive accumulates left to right; negative right to left. */
+    int32_t cumulative;
+    VplHistType histtype;
+    VplHistAlign align;
+    /* Non-zero lays the bars along x with the bins up y. */
+    int32_t horizontal;
+    /* Bar width as a fraction of the bin, clipped to [0, 1]. 0 means
+       automatic: 0.8 for side-by-side datasets, otherwise 1. */
+    double rwidth;
+    /* Non-zero stacks the datasets instead of placing them side by side. */
+    int32_t stacked;
+    /* Where the bars (or the outline) start. */
+    double bottom;
+    /* Non-zero puts the value axis on a log scale, as hist(log=True). */
+    int32_t log;
+} VplHistDesc;
+
+/* The general histogram: `datasetCount` datasets binned on shared edges --
+   hist([x1, x2, ...], ...). Each dataset takes the next colour of the LINE
+   cycle, as matplotlib's hist does.
+
+   `weights` may be NULL, or hold one array per dataset (each may be NULL),
+   counts[i] long. `descs` may be NULL or hold datasetCount patch styles, one
+   per dataset. `hist` may be NULL for the defaults.
+
+   The results are optional: `outTops` receives datasetCount * nbins heights
+   (dataset-major, after stacking and accumulation) and `outEdges` the nbins+1
+   edges, where nbins is binEdgeCount - 1 or `bins`. `outPatches` receives one
+   handle per dataset. */
+VPL_API VplResult VPL_CALL vplAxesHistFull(VplAxes *axes,
+                                           const double *const *datasets,
+                                           const size_t *counts,
+                                           const double *const *weights,
+                                           size_t datasetCount,
+                                           const VplHistDesc *hist,
+                                           const VplPatchDesc *descs,
+                                           double *outTops,
+                                           double *outEdges,
+                                           VplPatch **outPatches);
 
 /* Tick positions of your own, replacing the automatic ones. `labels` may be
    NULL to keep the automatic formatting of those positions.
@@ -694,6 +837,17 @@ VPL_API VplResult VPL_CALL vplAxesBoxPlot(VplAxes *axes,
                                           const size_t *counts,
                                           size_t groupCount);
 
+typedef enum VplColormap
+{
+    /* The perceptually uniform maps: equal steps in value look like equal steps
+       in brightness, and they survive greyscale printing. */
+    VplColormap_Viridis = 0,
+    VplColormap_Magma = 1,
+    VplColormap_Inferno = 2,
+    VplColormap_Plasma = 3,
+    VplColormap_Gray = 4,
+} VplColormap;
+
 typedef enum VplQuiverPivot
 {
     VplQuiverPivot_Tail = 0,
@@ -708,6 +862,8 @@ typedef enum VplQuiverField
     VplQuiverField_ColorSpec = 1u << 2,
     VplQuiverField_Pivot = 1u << 3,
     VplQuiverField_Label = 1u << 4,
+    VplQuiverField_C = 1u << 5,      /* C, cmap, and with hasVLimits vmin/vmax */
+    VplQuiverField_Colors = 1u << 6, /* one RGBA per arrow */
 } VplQuiverField;
 
 typedef struct VplQuiverDesc
@@ -723,6 +879,16 @@ typedef struct VplQuiverDesc
     const char *colorSpec;
     VplQuiverPivot pivot;
     const char *label;
+
+    /* Added later, so read only when structSize covers them.
+       quiver(X, Y, U, V, C): one value per arrow, coloured through cmap. */
+    const double *C;
+    VplColormap cmap;
+    int32_t hasVLimits;
+    double vmin;
+    double vmax;
+    /* Or explicit colours: count * 4 floats, RGBA in 0..1 per arrow. */
+    const float *colors;
 } VplQuiverDesc;
 
 /* A field of arrows -- quiver. Only the arrow POSITIONS count towards the data
@@ -1031,16 +1197,6 @@ VPL_API VplResult VPL_CALL vplAxesHasData(const VplAxes *axes, int *outHasData);
    (Welch's method). Each sets the axis labels matplotlib sets, and psd/csd also
    pin whole-number decibel ticks. */
 
-typedef enum VplColormap
-{
-    /* The perceptually uniform maps: equal steps in value look like equal steps
-       in brightness, and they survive greyscale printing. */
-    VplColormap_Viridis = 0,
-    VplColormap_Magma = 1,
-    VplColormap_Inferno = 2,
-    VplColormap_Plasma = 3,
-    VplColormap_Gray = 4,
-} VplColormap;
 
 /* The knobs the spectral family shares -- matplotlib's window, detrend, sides
    and pad_to. Every field's zero value is its matplotlib default (Hanning
@@ -1060,6 +1216,34 @@ typedef enum VplSpectralDetrend
     VplSpectralDetrend_Mean = 1,
     VplSpectralDetrend_Linear = 2,
 } VplSpectralDetrend;
+
+/* xcorr with detrend= and usevlines=. `maxLags` 0 means count - 1 (matplotlib's
+   maxlags=None). `detrend` is removed from both series first. With useVlines
+   zero the correlations are drawn as plot(lags, c, marker='o',
+   linestyle='None') in the next cycle colour, `desc` (may be NULL) styles that
+   line as for vplAxesPlot and `outLine` receives it; with the stalks, desc
+   must be NULL and outLine gets NULL. */
+VPL_API VplResult VPL_CALL vplAxesXCorrFull(VplAxes *axes,
+                                            const double *x,
+                                            const double *y,
+                                            size_t count,
+                                            int maxLags,
+                                            int normed,
+                                            VplSpectralDetrend detrend,
+                                            int32_t useVlines,
+                                            const VplLineDesc *desc,
+                                            VplLine **outLine);
+
+/* acorr with the same options. */
+VPL_API VplResult VPL_CALL vplAxesACorrFull(VplAxes *axes,
+                                            const double *x,
+                                            size_t count,
+                                            int maxLags,
+                                            int normed,
+                                            VplSpectralDetrend detrend,
+                                            int32_t useVlines,
+                                            const VplLineDesc *desc,
+                                            VplLine **outLine);
 typedef struct VplSpectralDesc
 {
     size_t structSize;
@@ -1227,6 +1411,26 @@ VPL_API VplResult VPL_CALL vplAxesPieLabel(VplAxes *axes,
                                            double distance,
                                            double fontSize);
 
+/* How pie_label aligns each label against its point. Auto is Outer past a
+   distance of 1 and Center inside it. Outer left-aligns the labels on the
+   right half of the pie and right-aligns those on the left. */
+typedef enum VplPieLabelAlign
+{
+    VplPieLabelAlign_Auto = 0,
+    VplPieLabelAlign_Center = 1,
+    VplPieLabelAlign_Outer = 2,
+} VplPieLabelAlign;
+
+/* pie_label with alignment= and rotate= (non-zero turns each label along its
+   wedge's middle angle, flipped on the left half to stay upright). */
+VPL_API VplResult VPL_CALL vplAxesPieLabelFull(VplAxes *axes,
+                                               const char *const *labels,
+                                               size_t count,
+                                               double distance,
+                                               double fontSize,
+                                               VplPieLabelAlign alignment,
+                                               int32_t rotate);
+
 /* One box's worth of summary: what vplAxesBoxPlot computes internally, and what
    vplAxesBxp takes instead of raw data. whisLo and whisHi are where the whiskers
    END (usually the furthest observation within 1.5 IQR of the nearer quartile,
@@ -1255,6 +1459,56 @@ VPL_API VplResult VPL_CALL vplAxesBxp(VplAxes *axes,
                                       const VplBoxStats *stats,
                                       size_t groupCount);
 
+/* boxplot's and bxp's keyword arguments. Zero-initialised (with structSize
+   set) it is the defaults. The negative-sense fields (hide..., noManageTicks)
+   keep the zero value meaning matplotlib's default of True. */
+typedef struct VplBoxDesc
+{
+    size_t structSize;
+
+    const double *positions; /* groupCount entries; NULL for 1, 2, ... */
+    const double *widths;    /* groupCount entries; NULL for the automatic width */
+    /* Tick labels, groupCount entries (tick_labels=); NULL labels each tick
+       with its position. */
+    const char *const *labels;
+
+    int32_t horizontal;   /* orientation='horizontal' */
+    int32_t patchArtist;  /* a filled C0 box instead of an outline */
+    int32_t showNotches;  /* notch=True */
+    int32_t showMeans;
+    int32_t meanLine;     /* the mean as a dashed line rather than a marker */
+    int32_t hideCaps;     /* showcaps=False */
+    int32_t hideBox;      /* showbox=False */
+    int32_t hideFliers;   /* showfliers=False */
+    int32_t noManageTicks; /* manage_ticks=False: leave ticks and limits alone */
+
+    /* vplAxesBoxPlotFull only. whis: how many IQRs the whiskers may reach (0
+       means 1.5), or with hasWhisPercentiles the two percentiles (0..100) they
+       end at instead. */
+    double whis;
+    int32_t hasWhisPercentiles;
+    double whisPercentiles[2];
+} VplBoxDesc;
+
+/* boxplot with its keyword arguments. desc may be NULL. */
+VPL_API VplResult VPL_CALL vplAxesBoxPlotFull(VplAxes *axes,
+                                              const double *values,
+                                              const size_t *counts,
+                                              size_t groupCount,
+                                              const VplBoxDesc *desc);
+
+/* bxp with its keyword arguments. The statistics showmeans and shownotches
+   need ride alongside rather than in VplBoxStats: `means` (for showMeans) and
+   `ciLo`/`ciHi` (the notch ends, for showNotches) hold groupCount values each,
+   and must be given when the matching option is on. */
+VPL_API VplResult VPL_CALL vplAxesBxpFull(VplAxes *axes,
+                                          const VplBoxStats *stats,
+                                          size_t groupCount,
+                                          const double *means,
+                                          const double *ciLo,
+                                          const double *ciHi,
+                                          const VplBoxDesc *desc);
+
 /* A kernel density estimate per group, mirrored about its position -- a violin
    plot. Same ragged-array convention as vplAxesBoxPlot: `values` is the groups
    laid end to end and `counts` gives each length.
@@ -1267,6 +1521,66 @@ VPL_API VplResult VPL_CALL vplAxesViolinPlot(VplAxes *axes,
                                              const double *values,
                                              const size_t *counts,
                                              size_t groupCount);
+
+/* violinplot's bw_method. */
+typedef enum VplViolinBandwidth
+{
+    VplViolinBandwidth_Scott = 0,
+    VplViolinBandwidth_Silverman = 1,
+    /* A fixed KDE factor, VplViolinDesc.bwFactor. */
+    VplViolinBandwidth_Scalar = 2,
+} VplViolinBandwidth;
+
+/* violinplot's side: whole violins, or only the half below/above the
+   position. */
+typedef enum VplViolinSide
+{
+    VplViolinSide_Both = 0,
+    VplViolinSide_Low = 1,
+    VplViolinSide_High = 2,
+} VplViolinSide;
+
+/* violinplot's keyword arguments. Zero-initialised (with structSize set) it is
+   violinplot(dataset). */
+typedef struct VplViolinDesc
+{
+    size_t structSize;
+
+    /* groupCount entries each, or NULL: positions 1..n, widths `width`. */
+    const double *positions;
+    const double *widths;
+    double width; /* 0 means 0.5 */
+
+    int32_t showMeans;
+    int32_t hideExtrema; /* showextrema=False */
+    int32_t showMedians;
+
+    /* quantiles: quantileCounts[g] fractions in [0, 1] for group g, laid end
+       to end in `quantiles`. Both NULL for none. */
+    const double *quantiles;
+    const size_t *quantileCounts;
+
+    size_t points; /* KDE evaluation points; 0 means 100 */
+    VplViolinBandwidth bwMethod;
+    double bwFactor; /* with VplViolinBandwidth_Scalar, > 0 */
+    VplViolinSide side;
+    int32_t horizontal;
+
+    /* Colour specs, cycled over the violins; NULL for the next line-cycle
+       colour (the body then at 30% alpha). */
+    const char *const *faceColorSpecs;
+    size_t faceColorCount;
+    const char *const *lineColorSpecs;
+    size_t lineColorCount;
+} VplViolinDesc;
+
+/* The general violinplot. Same ragged data layout as vplAxesViolinPlot; desc
+   may be NULL. */
+VPL_API VplResult VPL_CALL vplAxesViolinPlotFull(VplAxes *axes,
+                                                 const double *values,
+                                                 const size_t *counts,
+                                                 size_t groupCount,
+                                                 const VplViolinDesc *desc);
 
 /* An infinite line through (x, y) at `slope`, clipped to the view -- axline.
    Pass vertical = 1 for a vertical line (`slope` is then ignored). Re-derived on
@@ -1370,6 +1684,13 @@ VPL_API VplResult VPL_CALL vplAxesGetBoxAspect(const VplAxes *axes, double *outB
    (0.5, 0.5)). Only has an effect once an aspect setting shrinks the box. */
 VPL_API VplResult VPL_CALL vplAxesSetAnchor(VplAxes *axes, double x, double y);
 VPL_API VplResult VPL_CALL vplAxesGetAnchor(const VplAxes *axes, double *outX, double *outY);
+
+/* The same by name: "C", "SW", "S", "SE", "E", "NE", "N", "NW" or "W" --
+   set_anchor('SW'). get_anchor returns whichever form the anchor was last
+   given, so vplAxesGetAnchorCode yields the name, or NULL after a pair was
+   set with vplAxesSetAnchor. The default is "C". The string is static. */
+VPL_API VplResult VPL_CALL vplAxesSetAnchorCode(VplAxes *axes, const char *code);
+VPL_API VplResult VPL_CALL vplAxesGetAnchorCode(const VplAxes *axes, const char **outCode);
 
 /* locator_params: how many intervals the tick locator may use, instead of
    deriving it from how much room the axis has. Pass 0 for either axis to go
@@ -1807,6 +2128,17 @@ VPL_API VplResult VPL_CALL vplFigureColorbarOriented(VplFigure *figure,
                                                       int horizontal,
                                                       VplAxes **outAxes);
 
+/* contourf's extend: open-ended bands past the lowest and/or highest level,
+   painted in the colormap's end colours, so values outside the level range
+   are coloured rather than left blank. */
+typedef enum VplContourExtend
+{
+    VplContourExtend_Neither = 0,
+    VplContourExtend_Min = 1,
+    VplContourExtend_Max = 2,
+    VplContourExtend_Both = 3,
+} VplContourExtend;
+
 typedef enum VplFieldField
 {
     VplFieldField_Colormap = 1u << 0,
@@ -1816,6 +2148,7 @@ typedef enum VplFieldField
     VplFieldField_Label = 1u << 4,
     VplFieldField_LineWidth = 1u << 5, /* contour only */
     VplFieldField_ColorSpec = 1u << 6, /* contour only: one colour for all levels */
+    VplFieldField_Extend = 1u << 7,    /* contourf only */
 } VplFieldField;
 
 typedef struct VplFieldDesc
@@ -1832,6 +2165,9 @@ typedef struct VplFieldDesc
     const char *label;
     double lineWidth;
     const char *colorSpec;
+    /* contourf's extend (with VplFieldField_Extend). Added after the fields
+       above, so it is read only when structSize covers it. */
+    VplContourExtend extend;
 } VplFieldDesc;
 
 /*
@@ -1911,15 +2247,76 @@ VPL_API VplResult VPL_CALL vplAxesHist2D(VplAxes *axes,
 
    `gridsize` counts cells across x and defaults to matplotlib's 100 when 0 is
    passed; the y count follows as gridsize / sqrt(3) so the hexagons stay
-   regular. Empty bins are dropped rather than drawn in the lowest colour --
-   that is what distinguishes a hexbin from vplAxesHist2D.
-
-   Like matplotlib's, this pins the axes to the bin extent with no margin. */
+   regular. Every hexagon is drawn, empty ones in the colormap's lowest colour,
+   as matplotlib does when mincnt is not given; the view is the bin extent plus
+   the usual margin. */
 VPL_API VplResult VPL_CALL vplAxesHexbin(VplAxes *axes,
                                          const double *x,
                                          const double *y,
                                          size_t count,
                                          size_t gridsize);
+
+/* hexbin's reduce_C_function, for the common reductions. */
+typedef enum VplHexReduce
+{
+    VplHexReduce_Mean = 0,
+    VplHexReduce_Sum = 1,
+    VplHexReduce_Max = 2,
+    VplHexReduce_Min = 3,
+    VplHexReduce_Median = 4,
+    VplHexReduce_Std = 5,
+} VplHexReduce;
+
+/* hexbin's keyword arguments. Zero-initialised (with structSize set) it is
+   hexbin(x, y): counts over a 100-wide grid in viridis. */
+typedef struct VplHexbinDesc
+{
+    size_t structSize;
+
+    /* gridsize=(nx, ny). nx 0 means 100; ny 0 means nx / sqrt(3). */
+    size_t gridsizeX;
+    size_t gridsizeY;
+
+    /* C: one value per point, reduced per hexagon by `reduce`. NULL counts. */
+    const double *C;
+    VplHexReduce reduce;
+    /* Hide hexagons with fewer points; 0 is mincnt=None (1 once C is given). */
+    size_t mincnt;
+
+    /* hasExtent takes the bin extent [xmin, xmax, ymin, ymax] instead of the
+       data's; points outside it are not counted. */
+    int32_t hasExtent;
+    double extent[4];
+
+    VplColormap cmap;
+    /* hasVLimits fixes the norm instead of autoscaling over the hexagons. */
+    int32_t hasVLimits;
+    double vmin;
+    double vmax;
+
+    /* bins='log': a log norm, under which empty hexagons are left blank. */
+    int32_t logBins;
+    /* bins=N (> 0): colour by which of N equal value bins each falls in. */
+    size_t bins;
+
+    /* Added later, so read only when structSize covers them. */
+    /* xscale='log' / yscale='log': bin in log10 space and make that axis
+       logarithmic; the data must be positive there, and `extent` is then in
+       log10 units, as matplotlib's is. */
+    int32_t xLog;
+    int32_t yLog;
+    /* marginals=True: colour-coded bars along the bottom (nx bins over x) and
+       the left (2 * ny bins over y) edges, each C reduced over its bin -- or,
+       counting, a strip of ones, exactly as matplotlib draws it. */
+    int32_t marginals;
+} VplHexbinDesc;
+
+/* The general hexbin. `desc` may be NULL. */
+VPL_API VplResult VPL_CALL vplAxesHexbinFull(VplAxes *axes,
+                                             const double *x,
+                                             const double *y,
+                                             size_t count,
+                                             const VplHexbinDesc *desc);
 
 /* An unstructured triangular grid drawn as its edges -- triplot with no
    triangles given, so the Delaunay triangulation is computed for you.
@@ -1975,6 +2372,86 @@ VPL_API VplResult VPL_CALL vplAxesTriPcolor(VplAxes *axes,
                                             const double *z,
                                             size_t count);
 
+/* A triangulation given rather than computed -- matplotlib's
+   Triangulation(x, y, triangles, mask), which the Full forms below take.
+   Pass NULL (or triangles = NULL) for the Delaunay triangulation of the points. */
+typedef struct VplTriangulation
+{
+    size_t structSize;
+    /* triangleCount * 3 point indices, each in [0, count). */
+    const int32_t *triangles;
+    size_t triangleCount;
+    /* triangleCount flags, or NULL: a non-zero flag leaves that triangle out of
+       the drawing (and out of the colour scaling). Needs `triangles`. */
+    const uint8_t *mask;
+} VplTriangulation;
+
+/* The Delaunay triangulation the commands above compute, as point-index
+   triplets -- so that a mask or per-triangle values can be lined up with it.
+   Pass triangles = NULL to ask for the count; the buffer holds
+   triangleCapacity * 3 indices. The order is vplot's own, not Qhull's, so a
+   mask written against matplotlib's tri.triangles does not carry over. */
+VPL_API VplResult VPL_CALL vplTriangulate(const double *x,
+                                          const double *y,
+                                          size_t count,
+                                          int32_t *triangles,
+                                          size_t triangleCapacity,
+                                          size_t *outTriangleCount);
+
+/* triplot(x, y, triangles, fmt, mask=): the edges of the unmasked triangles,
+   and with a marker in `fmt` every point as a node. `fmt` is a format string
+   ("go-", "k--", "o") or NULL for plain lines. Without a colour in it, the
+   edges and the nodes each take the next colour of the line cycle, as
+   matplotlib's two plot calls do. */
+VPL_API VplResult VPL_CALL vplAxesTriplotFull(VplAxes *axes,
+                                              const double *x,
+                                              const double *y,
+                                              size_t count,
+                                              const VplTriangulation *tri,
+                                              const char *fmt);
+
+/* tricontour over a given triangulation. `levels` NULL asks for automatic
+   levels as vplAxesContour does (`levelCount` is N, 0 for 7). */
+VPL_API VplResult VPL_CALL vplAxesTriContourFull(VplAxes *axes,
+                                                 const double *x,
+                                                 const double *y,
+                                                 const double *z,
+                                                 size_t count,
+                                                 const VplTriangulation *tri,
+                                                 const double *levels,
+                                                 size_t levelCount,
+                                                 const VplFieldDesc *desc,
+                                                 VplContour **outContour);
+
+/* tricontourf over a given triangulation, with automatic levels as above and
+   desc's VplFieldField_Extend for the open-ended bands. */
+VPL_API VplResult VPL_CALL vplAxesTriContourFFull(VplAxes *axes,
+                                                  const double *x,
+                                                  const double *y,
+                                                  const double *z,
+                                                  size_t count,
+                                                  const VplTriangulation *tri,
+                                                  const double *levels,
+                                                  size_t levelCount,
+                                                  const VplFieldDesc *desc,
+                                                  VplContour **outContour);
+
+/* tripcolor(x, y, c, triangles=, mask=, cmap=, vmin=, vmax=, alpha=) with flat
+   shading. `c` holds one value per point (cCount == count; each triangle takes
+   the mean of its corners) or one per triangle (cCount == the triangle count),
+   points winning a tie as in matplotlib; `cAtTriangles` non-zero forces the
+   per-triangle reading -- facecolors=c. desc supplies the colormap, vmin/vmax
+   and alpha, and may be NULL. Gouraud shading is not implemented. */
+VPL_API VplResult VPL_CALL vplAxesTriPcolorFull(VplAxes *axes,
+                                                const double *x,
+                                                const double *y,
+                                                size_t count,
+                                                const VplTriangulation *tri,
+                                                const double *c,
+                                                size_t cCount,
+                                                int32_t cAtTriangles,
+                                                const VplFieldDesc *desc);
+
 /* Wedges proportional to each value's share of the total, starting at 3 o'clock
    and running counter-clockwise in the patch cycle's colours.
 
@@ -1983,8 +2460,60 @@ VPL_API VplResult VPL_CALL vplAxesTriPcolor(VplAxes *axes,
    else on the same axes afterwards. */
 VPL_API VplResult VPL_CALL vplAxesPie(VplAxes *axes, const double *x, size_t count);
 
+/* pie's keyword arguments. Zero-initialised (with structSize set) it is
+   pie(x): no labels, no percentages, counter-clockwise from 3 o'clock. */
+typedef struct VplPieDesc
+{
+    size_t structSize;
+
+    /* One offset per wedge, in radii, along the wedge's middle angle; NULL
+       for none. */
+    const double *explode;
+    /* One label per wedge, drawn outside at labelDistance; NULL for none. */
+    const char *const *labels;
+    /* Radii from the centre; 0 means matplotlib's 1.1. */
+    double labelDistance;
+    /* A printf format with one floating-point conversion, applied to each
+       wedge's percentage ("%1.1f%%"); NULL for no percentages. */
+    const char *autopct;
+    /* 0 means matplotlib's 0.6. */
+    double pctDistance;
+
+    double startAngle; /* degrees, counter-clockwise from 3 o'clock */
+    double radius;     /* 0 means 1 */
+    int32_t clockwise; /* counterclock=False */
+    int32_t rotateLabels;
+    /* Non-zero is normalize=False: the values are fractions of the circle
+       and must sum to at most 1, leaving a gap. */
+    int32_t noNormalize;
+    double centerX;
+    double centerY;
+    /* Non-zero keeps the axes frame and autoscales to the pie. */
+    int32_t frame;
+
+    /* Wedge colours as specs, cycled; NULL for the patch cycle. */
+    const char *const *colorSpecs;
+    size_t colorCount;
+
+    /* Font size of the labels and percentages; 0 means 10. */
+    double fontSize;
+} VplPieDesc;
+
+/* The general pie: explode, labels, autopct, startangle, radius, direction,
+   normalize, centre, frame and colours. Values must be finite and
+   non-negative with a positive sum. */
+VPL_API VplResult VPL_CALL vplAxesPieFull(VplAxes *axes,
+                                          const double *x,
+                                          size_t count,
+                                          const VplPieDesc *desc);
+
 /* Iso-lines through a scalar field, extracted by marching squares. Levels are
-   computed at call time, so later edits to `values` are not reflected. */
+   computed at call time, so later edits to `values` are not reflected.
+
+   `levels` NULL asks for automatic levels -- contour(Z, N): `levelCount` is
+   N (0 for matplotlib's 7), and the levels are a MaxNLocator(N + 1) over the
+   data's range, trimmed to one level either side of it. Read them back with
+   vplContourGetLevels. */
 VPL_API VplResult VPL_CALL vplAxesContour(VplAxes *axes,
                                           const double *values,
                                           size_t rows,
@@ -1997,7 +2526,9 @@ VPL_API VplResult VPL_CALL vplAxesContour(VplAxes *axes,
 /* Filled contours: the same field and the same levels, but what is drawn is the
    BANDS between consecutive levels. n levels give n - 1 bands, each coloured by
    the colormap at the band's midpoint, and anything outside the level range is
-   left unpainted -- matplotlib's extend='neither'.
+   left unpainted -- matplotlib's extend='neither' -- unless desc asks for
+   VplFieldField_Extend. Automatic levels work as for vplAxesContour, and an
+   extended end trims one more level there, as matplotlib does.
 
    Drawn without antialiasing, as matplotlib draws them: neighbouring bands
    share a boundary, and two half-covered colours compositing over each other
@@ -2044,6 +2575,13 @@ typedef struct VplClabelDesc
    enough, where each runs straightest, whether two would crowd). This differs
    from matplotlib, which decides at clabel() call time. Only line contours carry
    labels; on a filled set this has no effect. */
+/* The levels a contour set was drawn at -- cs.levels, which is how to learn
+   what automatic levels were chosen. Pass buffer = NULL to ask for the count. */
+VPL_API VplResult VPL_CALL vplContourGetLevels(const VplContour *contour,
+                                               double *buffer,
+                                               size_t bufferCount,
+                                               size_t *outCount);
+
 VPL_API VplResult VPL_CALL vplContourClabel(VplContour *contour,
                                             const VplClabelDesc *desc);
 

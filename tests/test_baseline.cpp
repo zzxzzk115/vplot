@@ -9,6 +9,8 @@
  * (see lib/matplotlib/testing/compare.py).
  */
 
+#include "vpl/vpl.h" /* the general errorbar is reached through the ABI */
+
 #include "agg_renderer.h"
 #include "mplutils.h" /* CLOSEPOLY */
 #include "colors.h"
@@ -54,6 +56,12 @@ constexpr KnownGap kKnownGaps[] = {
      "mathtext box model differs: hinted vs unhinted advances, and the layout "
      "box width/height/depth are ceiled and carry a phantom depth that vplot "
      "does not reproduce, shifting each decade label by about a pixel"},
+    {"hist_log", 6.0,
+     "the bars and outline match; the residue is the decade labels, the same "
+     "mathtext box-model gap as loglog"},
+    {"hexbin_log_marginals", 5.0,
+     "the hexagons and marginal strips match; the residue is the log axis's "
+     "decade labels, the same mathtext box-model gap as loglog"},
 };
 
 double tolerance_for(const std::string &name, const char **cause)
@@ -648,6 +656,681 @@ vpl::Figure make_hist_density()
         vals[i] = std::sin(i * 1.7) + std::sin(i * 0.31);
     }
     ax.hist(vals.data(), n, 10, /*density=*/true);
+    return fig;
+}
+
+/* Mirrors case_errorbar_full in tools/gen_references.py. The general form is
+   reached through the C ABI, since its fmt/ecolor handling lives there. */
+vpl::Figure make_errorbar_full()
+{
+    std::vector<double> x, y, lower, upper, sym;
+    for (int i = 0; i < 12; ++i) {
+        x.push_back(i * 0.5);
+        y.push_back(std::sin(i * 0.5) + 2.0);
+        lower.push_back(0.1 + 0.05 * i);
+        upper.push_back(0.3 * std::fabs(std::cos(static_cast<double>(i))));
+        sym.push_back(0.15);
+    }
+    const std::size_t n = x.size();
+
+    vpl::Figure fig;
+    VplAxes *ax1 = reinterpret_cast<VplAxes *>(&fig.add_subplot(2, 2, 1));
+    VplAxes *ax2 = reinterpret_cast<VplAxes *>(&fig.add_subplot(2, 2, 2));
+    VplAxes *ax3 = reinterpret_cast<VplAxes *>(&fig.add_subplot(2, 2, 3));
+    VplAxes *ax4 = reinterpret_cast<VplAxes *>(&fig.add_subplot(2, 2, 4));
+
+    VplLineDesc ld{};
+    ld.structSize = sizeof(ld);
+    ld.set = VplLineField_Format;
+
+    VplErrorBarDesc eb{};
+    eb.structSize = sizeof(eb);
+    eb.eColorSpec = "tab:red";
+    eb.elinewidth = 1.0;
+    eb.capsize = 4.0;
+    eb.capthick = 2.0;
+    ld.format = "o";
+    vplAxesErrorBarFull(ax1, x.data(), y.data(), n, lower.data(), upper.data(), nullptr,
+                        nullptr, &eb, &ld, nullptr);
+
+    eb = VplErrorBarDesc{};
+    eb.structSize = sizeof(eb);
+    eb.errorEveryOffset = 1;
+    eb.errorEveryStep = 3;
+    eb.capsize = 3.0;
+    ld.format = "s--";
+    vplAxesErrorBarFull(ax2, x.data(), y.data(), n, sym.data(), nullptr, upper.data(),
+                        lower.data(), &eb, &ld, nullptr);
+
+    std::vector<double> shifted;
+    for (double v : y) {
+        shifted.push_back(v - 1.0);
+    }
+    vplAxesPlot(ax3, x.data(), shifted.data(), n, nullptr, nullptr);
+    eb = VplErrorBarDesc{};
+    eb.structSize = sizeof(eb);
+    eb.errorEveryStep = 2;
+    eb.capsize = 2.0;
+    ld.format = "none";
+    vplAxesErrorBarFull(ax3, x.data(), y.data(), n, lower.data(), upper.data(), nullptr,
+                        nullptr, &eb, &ld, nullptr);
+
+    eb = VplErrorBarDesc{};
+    eb.structSize = sizeof(eb);
+    eb.eColorSpec = "k";
+    eb.barsAbove = 1;
+    ld.format = "o-";
+    ld.set = VplLineField_Format | VplLineField_Width;
+    ld.width = 3.0;
+    vplAxesErrorBarFull(ax4, x.data(), y.data(), n, lower.data(), upper.data(), nullptr,
+                        nullptr, &eb, &ld, nullptr);
+    return fig;
+}
+
+/* Mirrors case_tri_explicit (and _tri_grid) in tools/gen_references.py. */
+vpl::Figure make_tri_explicit()
+{
+    std::vector<double> xs, ys, zs;
+    for (int i = 0; i < 6; ++i) {
+        for (int j = 0; j < 5; ++j) {
+            const double px = i + 0.13 * std::sin(2.7 * (i + j));
+            const double py = j + 0.11 * std::cos(1.9 * (i - j));
+            xs.push_back(px);
+            ys.push_back(py);
+            zs.push_back(std::sin(0.8 * px) * std::cos(0.6 * py));
+        }
+    }
+    std::vector<int32_t> tris;
+    std::vector<uint8_t> mask;
+    for (int i = 0; i < 5; ++i) {
+        for (int j = 0; j < 4; ++j) {
+            const int32_t a = i * 5 + j, b = (i + 1) * 5 + j, c = (i + 1) * 5 + j + 1,
+                          d = i * 5 + j + 1;
+            const uint8_t hole = (i == 2 && (j == 1 || j == 2)) ? 1 : 0;
+            tris.insert(tris.end(), {a, b, c, a, c, d});
+            mask.insert(mask.end(), {hole, hole});
+        }
+    }
+    const size_t ntri = mask.size();
+    std::vector<double> fc;
+    for (size_t t = 0; t < ntri; ++t) {
+        fc.push_back(std::sin(0.7 * static_cast<double>(t)));
+    }
+    VplTriangulation tri{};
+    tri.structSize = sizeof(tri);
+    tri.triangles = tris.data();
+    tri.triangleCount = ntri;
+    tri.mask = mask.data();
+
+    vpl::Figure fig;
+    VplAxes *ax1 = reinterpret_cast<VplAxes *>(&fig.add_subplot(2, 2, 1));
+    vplAxesTriplotFull(ax1, xs.data(), ys.data(), xs.size(), &tri, "o--");
+    VplAxes *ax2 = reinterpret_cast<VplAxes *>(&fig.add_subplot(2, 2, 2));
+    vplAxesTriContourFull(ax2, xs.data(), ys.data(), zs.data(), xs.size(), &tri, nullptr, 6,
+                          nullptr, nullptr);
+    VplAxes *ax3 = reinterpret_cast<VplAxes *>(&fig.add_subplot(2, 2, 3));
+    const double lv[4] = {-0.4, -0.1, 0.2, 0.5};
+    VplFieldDesc fd{};
+    fd.structSize = sizeof(fd);
+    fd.set = VplFieldField_Extend | VplFieldField_Colormap;
+    fd.extend = VplContourExtend_Both;
+    fd.cmap = VplColormap_Plasma;
+    vplAxesTriContourFFull(ax3, xs.data(), ys.data(), zs.data(), xs.size(), &tri, lv, 4, &fd,
+                           nullptr);
+    VplAxes *ax4 = reinterpret_cast<VplAxes *>(&fig.add_subplot(2, 2, 4));
+    VplFieldDesc pd{};
+    pd.structSize = sizeof(pd);
+    pd.set = VplFieldField_Colormap;
+    pd.cmap = VplColormap_Magma;
+    vplAxesTriPcolorFull(ax4, xs.data(), ys.data(), xs.size(), &tri, fc.data(), fc.size(), 1,
+                         &pd);
+    return fig;
+}
+
+/* Mirrors case_contour_over_mesh: line contours drawn above a later mesh. */
+vpl::Figure make_contour_over_mesh()
+{
+    std::vector<double> xs, ys, zs;
+    for (int i = 0; i < 6; ++i) {
+        for (int j = 0; j < 5; ++j) {
+            const double px = i + 0.13 * std::sin(2.7 * (i + j));
+            const double py = j + 0.11 * std::cos(1.9 * (i - j));
+            xs.push_back(px);
+            ys.push_back(py);
+            zs.push_back(std::sin(0.8 * px) * std::cos(0.6 * py));
+        }
+    }
+    std::vector<int32_t> tris;
+    for (int i = 0; i < 5; ++i) {
+        for (int j = 0; j < 4; ++j) {
+            const int32_t a = i * 5 + j, b = (i + 1) * 5 + j, c = (i + 1) * 5 + j + 1,
+                          d = i * 5 + j + 1;
+            tris.insert(tris.end(), {a, b, c, a, c, d});
+        }
+    }
+    VplTriangulation tri{};
+    tri.structSize = sizeof(tri);
+    tri.triangles = tris.data();
+    tri.triangleCount = tris.size() / 3;
+
+    vpl::Figure fig;
+    VplAxes *ax = reinterpret_cast<VplAxes *>(&fig.add_subplot());
+    const double lv[4] = {-0.4, -0.1, 0.2, 0.5};
+    VplFieldDesc fd{};
+    fd.structSize = sizeof(fd);
+    fd.set = VplFieldField_ColorSpec;
+    fd.colorSpec = "white";
+    vplAxesTriContourFull(ax, xs.data(), ys.data(), zs.data(), xs.size(), &tri, lv, 4, &fd,
+                          nullptr);
+    vplAxesTriPcolorFull(ax, xs.data(), ys.data(), xs.size(), &tri, zs.data(), zs.size(), 0,
+                         nullptr);
+    return fig;
+}
+
+/* Mirrors case_errorbar_limits in tools/gen_references.py. */
+vpl::Figure make_errorbar_limits()
+{
+    const double x[6] = {0, 1, 2, 3, 4, 5};
+    const double y[6] = {1.0, 1.8, 1.4, 2.2, 2.0, 2.6};
+    const uint8_t lo[6] = {1, 0, 1, 0, 0, 1};
+    const uint8_t up[6] = {0, 1, 1, 0, 0, 0};
+    const uint8_t xup[6] = {0, 0, 0, 1, 1, 0};
+    const double ye[6] = {0.4, 0.4, 0.4, 0.4, 0.4, 0.4};
+    const double xe[6] = {0.3, 0.3, 0.3, 0.3, 0.3, 0.3};
+
+    vpl::Figure fig;
+    VplAxes *ax1 = reinterpret_cast<VplAxes *>(&fig.add_subplot(2, 1, 1));
+    VplErrorBarDesc eb{};
+    eb.structSize = sizeof(eb);
+    eb.capsize = 3.0;
+    eb.eLineStyle = VplLineStyle_Dashed;
+    eb.lolims = lo;
+    eb.uplims = up;
+    VplLineDesc ld{};
+    ld.structSize = sizeof(ld);
+    ld.set = VplLineField_Format;
+    ld.format = "o";
+    vplAxesErrorBarFull(ax1, x, y, 6, ye, nullptr, nullptr, nullptr, &eb, &ld, nullptr);
+
+    VplAxes *ax2 = reinterpret_cast<VplAxes *>(&fig.add_subplot(2, 1, 2));
+    VplErrorBarDesc eb2{};
+    eb2.structSize = sizeof(eb2);
+    eb2.eColorSpec = "tab:red";
+    eb2.xlolims = up;
+    eb2.xuplims = xup;
+    ld.format = "s-";
+    vplAxesErrorBarFull(ax2, x, y, 6, nullptr, nullptr, xe, nullptr, &eb2, &ld, nullptr);
+    return fig;
+}
+
+/* Mirrors case_hexbin_log_marginals in tools/gen_references.py. */
+vpl::Figure make_hexbin_log_marginals()
+{
+    std::vector<double> xs, ys, cs, lx;
+    for (int i = 0; i < 400; ++i) {
+        const double t = i * 0.37;
+        const double r = 0.2 + 0.004 * i;
+        xs.push_back(2.0 + std::cos(t) * r * 3.0);
+        ys.push_back(2.0 + std::sin(t * 1.3) * r * 2.0);
+        cs.push_back(std::sin(i * 0.11));
+        lx.push_back(std::pow(10.0, 0.5 * xs.back()));
+    }
+    vpl::Figure fig;
+    VplAxes *ax1 = reinterpret_cast<VplAxes *>(&fig.add_subplot(1, 2, 1));
+    VplHexbinDesc d{};
+    d.structSize = sizeof(d);
+    d.gridsizeX = 12;
+    d.xLog = 1;
+    d.logBins = 1;
+    d.cmap = VplColormap_Magma;
+    vplAxesHexbinFull(ax1, lx.data(), ys.data(), lx.size(), &d);
+
+    VplAxes *ax2 = reinterpret_cast<VplAxes *>(&fig.add_subplot(1, 2, 2));
+    d = VplHexbinDesc{};
+    d.structSize = sizeof(d);
+    d.gridsizeX = 10;
+    d.C = cs.data();
+    d.reduce = VplHexReduce_Sum;
+    d.marginals = 1;
+    vplAxesHexbinFull(ax2, xs.data(), ys.data(), xs.size(), &d);
+    return fig;
+}
+
+/* Mirrors case_quiver_colors in tools/gen_references.py. */
+vpl::Figure make_quiver_colors()
+{
+    const int g = 6;
+    std::vector<double> xs, ys, us, vs, cs;
+    for (int i = 0; i < g; ++i) {
+        for (int j = 0; j < g; ++j) {
+            const double x = -2.0 + 4.0 * j / (g - 1);
+            const double y = -2.0 + 4.0 * i / (g - 1);
+            xs.push_back(x);
+            ys.push_back(y);
+            us.push_back(-y * 0.5);
+            vs.push_back(x * 0.5);
+            cs.push_back(std::hypot(x, y));
+        }
+    }
+    const std::size_t n = xs.size();
+    vpl::Figure fig;
+    VplAxes *ax1 = reinterpret_cast<VplAxes *>(&fig.add_subplot(1, 2, 1));
+    VplAxes *ax2 = reinterpret_cast<VplAxes *>(&fig.add_subplot(1, 2, 2));
+
+    VplQuiverDesc d{};
+    d.structSize = sizeof(d);
+    d.set = VplQuiverField_C;
+    d.C = cs.data();
+    d.cmap = VplColormap_Magma;
+    vplAxesQuiver(ax1, xs.data(), ys.data(), us.data(), vs.data(), n, &d);
+
+    static const float palette[3][4] = {{0.839216f, 0.152941f, 0.156863f, 1.0f},
+                                        {0.172549f, 0.627451f, 0.172549f, 1.0f},
+                                        {0.121569f, 0.466667f, 0.705882f, 1.0f}};
+    std::vector<float> colors;
+    for (std::size_t k = 0; k < n; ++k) {
+        colors.insert(colors.end(), palette[k % 3], palette[k % 3] + 4);
+    }
+    d = VplQuiverDesc{};
+    d.structSize = sizeof(d);
+    d.set = VplQuiverField_Colors | VplQuiverField_Pivot;
+    d.colors = colors.data();
+    d.pivot = VplQuiverPivot_Middle;
+    vplAxesQuiver(ax2, xs.data(), ys.data(), us.data(), vs.data(), n, &d);
+    return fig;
+}
+
+/* Mirrors case_boxplot_full in tools/gen_references.py. */
+vpl::Figure make_boxplot_full()
+{
+    std::vector<double> a, b, c;
+    for (int i = 0; i < 60; ++i) {
+        a.push_back(std::sin(i * 0.7) * 2.0 + std::cos(i * 0.13));
+    }
+    a.push_back(6.5);
+    a.push_back(-5.0);
+    for (int i = 0; i < 45; ++i) {
+        const double cs = std::cos(i * 0.31);
+        b.push_back(cs * cs * cs * 3.0 + 1.0);
+    }
+    for (int i = 0; i < 70; ++i) {
+        c.push_back(0.5 * std::sin(i * 1.9) + 0.03 * i);
+    }
+    c.push_back(4.0);
+    std::vector<double> all = a;
+    all.insert(all.end(), b.begin(), b.end());
+    all.insert(all.end(), c.begin(), c.end());
+    const std::size_t counts[] = {a.size(), b.size(), c.size()};
+
+    vpl::Figure fig;
+    {
+        const double positions[] = {0.5, 2.0, 3.0};
+        const double widths[] = {0.3, 0.6, 0.4};
+        vpl::BoxOptions o;
+        o.positions = positions;
+        o.widths = widths;
+        o.shownotches = true;
+        o.showmeans = true;
+        fig.add_subplot(2, 2, 1).boxplot(all.data(), counts, 3, o);
+    }
+    {
+        const std::string labels[] = {"alpha", "beta", "gamma"};
+        vpl::BoxOptions o;
+        o.horizontal = true;
+        o.patch_artist = true;
+        o.labels = labels;
+        fig.add_subplot(2, 2, 2).boxplot(all.data(), counts, 3, o);
+    }
+    {
+        vpl::BoxOptions o;
+        o.showmeans = true;
+        o.meanline = true;
+        o.showcaps = false;
+        const double pct[] = {5.0, 95.0};
+        fig.add_subplot(2, 2, 3).boxplot(all.data(), counts, 3, o, 1.5, pct);
+    }
+    {
+        vpl::BoxOptions o;
+        o.showfliers = false;
+        o.manage_ticks = false;
+        fig.add_subplot(2, 2, 4).boxplot(all.data(), counts, 3, o, 0.5);
+    }
+    return fig;
+}
+
+/* Mirrors case_xcorr_full in tools/gen_references.py. */
+vpl::Figure make_xcorr_full()
+{
+    std::vector<double> a, b;
+    for (int i = 0; i < 60; ++i) {
+        a.push_back(0.05 * i + std::sin(i * 0.6));
+        b.push_back(2.0 + std::cos(i * 0.6 + 0.4));
+    }
+    vpl::Figure fig;
+    fig.add_subplot(2, 1, 1).acorr(a.data(), a.size(), 20, true, vpl::SpectralDetrend::Linear,
+                                   /*usevlines=*/false);
+    fig.add_subplot(2, 1, 2).xcorr(a.data(), b.data(), 30, 29, true, vpl::SpectralDetrend::Mean);
+    return fig;
+}
+
+/* Mirrors case_violin_full in tools/gen_references.py. */
+vpl::Figure make_violin_full()
+{
+    std::vector<double> a, b, c;
+    for (int i = 0; i < 120; ++i) {
+        a.push_back(std::sin(i * 0.7) * 2.0 + std::cos(i * 0.13));
+    }
+    for (int i = 0; i < 90; ++i) {
+        const double cs = std::cos(i * 0.31);
+        b.push_back(cs * cs * cs * 3.0 + 1.0);
+    }
+    for (int i = 0; i < 150; ++i) {
+        c.push_back(0.5 * std::sin(i * 1.9) + 0.02 * i);
+    }
+    vpl::Figure fig;
+    {
+        std::vector<double> all = a;
+        all.insert(all.end(), b.begin(), b.end());
+        all.insert(all.end(), c.begin(), c.end());
+        const std::size_t counts[] = {a.size(), b.size(), c.size()};
+        const double positions[] = {0.5, 2.0, 3.0};
+        const double widths[] = {0.4, 0.9, 0.6};
+        const double quantiles[] = {0.25, 0.75, 0.1, 0.5, 0.9};
+        const std::size_t qcounts[] = {2, 0, 3};
+        vpl::ViolinOptions o;
+        o.positions = positions;
+        o.widths = widths;
+        o.showmeans = true;
+        o.showmedians = true;
+        o.quantiles = quantiles;
+        o.quantile_counts = qcounts;
+        o.bandwidth = vpl::ViolinOptions::Bandwidth::Silverman;
+        fig.add_subplot(1, 2, 1).violinplot(all.data(), counts, 3, o);
+    }
+    {
+        std::vector<double> all = a;
+        all.insert(all.end(), c.begin(), c.end());
+        const std::size_t counts[] = {a.size(), c.size()};
+        vpl::ViolinOptions o;
+        o.horizontal = true;
+        o.side = vpl::ViolinOptions::Side::High;
+        o.bandwidth = vpl::ViolinOptions::Bandwidth::Scalar;
+        o.bw_factor = 0.3;
+        o.points = 40;
+        o.facecolors = {vpl::Color::rgb(0.172549, 0.627451, 0.172549)}; /* tab:green */
+        o.linecolors = {vpl::Color::rgb(0.0, 0.0, 0.0)};
+        fig.add_subplot(1, 2, 2).violinplot(all.data(), counts, 2, o);
+    }
+    return fig;
+}
+
+/* Mirrors case_hexbin_full in tools/gen_references.py. */
+vpl::Figure make_hexbin_full()
+{
+    std::vector<double> xs, ys, cs;
+    for (int i = 0; i < 400; ++i) {
+        const double t = i * 0.37;
+        const double r = 0.2 + 0.004 * i;
+        xs.push_back(2.0 + std::cos(t) * r * 3.0);
+        ys.push_back(2.0 + std::sin(t * 1.3) * r * 2.0);
+        cs.push_back(std::sin(i * 0.11));
+    }
+    const std::size_t n = xs.size();
+    vpl::Figure fig;
+    {
+        vpl::HexbinOptions o;
+        o.nx = 15;
+        o.C = cs.data();
+        o.mincnt = 2;
+        fig.add_subplot(2, 2, 1).hexbin(xs.data(), ys.data(), n, o);
+    }
+    {
+        vpl::HexbinOptions o;
+        o.nx = 20;
+        o.log_bins = true;
+        o.cmap = vpl::Colormap::Magma;
+        fig.add_subplot(2, 2, 2).hexbin(xs.data(), ys.data(), n, o);
+    }
+    {
+        vpl::HexbinOptions o;
+        o.nx = 12;
+        o.ny = 5;
+        o.C = cs.data();
+        o.reduce = vpl::HexReduce::Sum;
+        o.has_extent = true;
+        o.extent[0] = 0.0;
+        o.extent[1] = 4.0;
+        o.extent[2] = 0.0;
+        o.extent[3] = 4.0;
+        o.cmap = vpl::Colormap::Gray;
+        fig.add_subplot(2, 2, 3).hexbin(xs.data(), ys.data(), n, o);
+    }
+    {
+        vpl::HexbinOptions o;
+        o.nx = 10;
+        o.bins = 4;
+        o.has_vlimits = true;
+        o.vmin = 0.0;
+        o.vmax = 3.0;
+        fig.add_subplot(2, 2, 4).hexbin(xs.data(), ys.data(), n, o);
+    }
+    return fig;
+}
+
+/* Mirrors case_contour_auto in tools/gen_references.py, through the C ABI
+   where the automatic levels and extend are resolved. */
+vpl::Figure make_contour_auto()
+{
+    const std::size_t rows = 30, cols = 40;
+    std::vector<double> z;
+    for (std::size_t r = 0; r < rows; ++r) {
+        for (std::size_t c = 0; c < cols; ++c) {
+            const double dc = static_cast<double>(c) - 25.0;
+            const double dr = static_cast<double>(r) - 10.0;
+            z.push_back(std::sin(static_cast<double>(c) * 0.15) *
+                            std::cos(static_cast<double>(r) * 0.2) +
+                        0.6 * std::exp(-(dc * dc + dr * dr) / 60.0));
+        }
+    }
+    vpl::Figure fig;
+    VplAxes *ax[4];
+    for (unsigned k = 0; k < 4; ++k) {
+        ax[k] = reinterpret_cast<VplAxes *>(&fig.add_subplot(2, 2, k + 1));
+    }
+    vplAxesContour(ax[0], z.data(), rows, cols, nullptr, 0, nullptr, nullptr);
+    vplAxesContourF(ax[1], z.data(), rows, cols, nullptr, 5, nullptr, nullptr);
+
+    VplFieldDesc d{};
+    d.structSize = sizeof(d);
+    d.set = VplFieldField_Extend;
+    d.extend = VplContourExtend_Both;
+    const double lv[4] = {-0.5, 0.0, 0.5, 1.0};
+    vplAxesContourF(ax[2], z.data(), rows, cols, lv, 4, &d, nullptr);
+
+    d.set = VplFieldField_Extend | VplFieldField_Colormap;
+    d.extend = VplContourExtend_Min;
+    d.cmap = VplColormap_Magma;
+    vplAxesContourF(ax[3], z.data(), rows, cols, nullptr, 6, &d, nullptr);
+    return fig;
+}
+
+/* Mirrors case_pie_full in tools/gen_references.py, through the C ABI where
+   the labels and autopct are assembled. */
+vpl::Figure make_pie_full()
+{
+    vpl::Figure fig;
+    VplAxes *ax1 = reinterpret_cast<VplAxes *>(&fig.add_subplot(1, 2, 1));
+    VplAxes *ax2 = reinterpret_cast<VplAxes *>(&fig.add_subplot(1, 2, 2));
+
+    const double sizes[4] = {15, 30, 45, 10};
+    const char *const labels[4] = {"frogs", "hogs", "dogs", "logs"};
+    const double explode[4] = {0, 0.1, 0, 0};
+    VplPieDesc d{};
+    d.structSize = sizeof(d);
+    d.labels = labels;
+    d.autopct = "%1.1f%%";
+    d.explode = explode;
+    d.startAngle = 90.0;
+    vplAxesPieFull(ax1, sizes, 4, &d);
+
+    const double fracs[3] = {0.3, 0.25, 0.25};
+    const char *const labels2[3] = {"a", "bb", "ccc"};
+    const char *const colors[3] = {"tab:red", "0.6", "#2ca02c"};
+    d = VplPieDesc{};
+    d.structSize = sizeof(d);
+    d.labels = labels2;
+    d.clockwise = 1;
+    d.noNormalize = 1;
+    d.radius = 0.9;
+    d.colorSpecs = colors;
+    d.colorCount = 3;
+    d.rotateLabels = 1;
+    d.labelDistance = 1.05;
+    d.autopct = "%.0f";
+    d.pctDistance = 0.7;
+    vplAxesPieFull(ax2, fracs, 3, &d);
+    return fig;
+}
+
+/* Mirrors _hist_datasets in tools/gen_references.py. */
+struct HistData
+{
+    std::vector<double> a, b, c;
+    HistData()
+    {
+        for (int i = 0; i < 300; ++i) {
+            a.push_back(std::sin(i * 1.7) + std::sin(i * 0.31));
+        }
+        for (int i = 0; i < 250; ++i) {
+            b.push_back(0.8 * std::cos(i * 0.53) + 0.4 * std::sin(i * 2.9) - 0.2);
+        }
+        for (int i = 0; i < 200; ++i) {
+            c.push_back(1.3 * std::sin(i * 0.77));
+        }
+    }
+};
+
+vpl::Figure make_hist_options()
+{
+    const HistData d;
+    vpl::Figure fig;
+
+    {
+        vpl::Axes &ax = fig.add_subplot(2, 2, 1);
+        std::vector<double> w;
+        for (std::size_t i = 0; i < d.a.size(); ++i) {
+            const double cs = std::cos(static_cast<double>(i) * 0.9);
+            w.push_back(0.5 + 0.5 * cs * cs);
+        }
+        const double edges[] = {-2.0, -1.2, -0.5, 0.0, 0.3, 1.0, 2.2};
+        vpl::HistOptions o;
+        o.edges = edges;
+        o.edge_count = 7;
+        o.rwidth = 0.7;
+        o.align = vpl::HistAlign::Left;
+        const double *data[] = {d.a.data()};
+        const std::size_t counts[] = {d.a.size()};
+        const double *weights[] = {w.data()};
+        ax.hist(data, counts, weights, 1, o);
+    }
+    {
+        vpl::Axes &ax = fig.add_subplot(2, 2, 2);
+        vpl::HistOptions o;
+        o.bins = 8;
+        const double *data[] = {d.a.data(), d.b.data(), d.c.data()};
+        const std::size_t counts[] = {d.a.size(), d.b.size(), d.c.size()};
+        ax.hist(data, counts, nullptr, 3, o);
+    }
+    {
+        vpl::Axes &ax = fig.add_subplot(2, 2, 3);
+        vpl::HistOptions o;
+        o.bins = 12;
+        o.has_range = true;
+        o.range_lo = -1.5;
+        o.range_hi = 1.5;
+        o.density = true;
+        o.type = vpl::HistType::BarStacked;
+        const double *data[] = {d.b.data(), d.c.data()};
+        const std::size_t counts[] = {d.b.size(), d.c.size()};
+        ax.hist(data, counts, nullptr, 2, o);
+    }
+    {
+        vpl::Axes &ax = fig.add_subplot(2, 2, 4);
+        vpl::HistOptions filled;
+        filled.type = vpl::HistType::StepFilled;
+        filled.cumulative = -1;
+        const double *one[] = {d.c.data()};
+        const std::size_t one_count[] = {d.c.size()};
+        ax.hist(one, one_count, nullptr, 1, filled);
+
+        vpl::HistOptions step;
+        step.type = vpl::HistType::Step;
+        step.stacked = true;
+        const double *two[] = {d.a.data(), d.b.data()};
+        const std::size_t two_count[] = {d.a.size(), d.b.size()};
+        ax.hist(two, two_count, nullptr, 2, step);
+    }
+    return fig;
+}
+
+vpl::Figure make_hist_horizontal()
+{
+    const HistData d;
+    vpl::Figure fig;
+    {
+        vpl::Axes &ax = fig.add_subplot(1, 2, 1);
+        vpl::HistOptions o;
+        o.bins = 9;
+        o.horizontal = true;
+        o.bottom = 3.0;
+        o.rwidth = 0.5;
+        const double *data[] = {d.a.data()};
+        const std::size_t counts[] = {d.a.size()};
+        ax.hist(data, counts, nullptr, 1, o);
+    }
+    {
+        vpl::Axes &ax = fig.add_subplot(1, 2, 2);
+        vpl::HistOptions o;
+        o.bins = 7;
+        o.horizontal = true;
+        o.type = vpl::HistType::StepFilled;
+        o.cumulative = 1;
+        o.density = true;
+        o.align = vpl::HistAlign::Right;
+        const double *data[] = {d.b.data()};
+        const std::size_t counts[] = {d.b.size()};
+        ax.hist(data, counts, nullptr, 1, o);
+    }
+    return fig;
+}
+
+vpl::Figure make_hist_log()
+{
+    std::vector<double> tail;
+    for (int i = 0; i < 300; ++i) {
+        tail.push_back(std::exp(2.0 * std::sin(i * 0.37) + 1.5 * std::cos(i * 1.3)));
+    }
+    vpl::Figure fig;
+    {
+        vpl::Axes &ax = fig.add_subplot(1, 2, 1);
+        vpl::HistOptions o;
+        o.bins = 25;
+        o.log = true;
+        const double *data[] = {tail.data()};
+        const std::size_t counts[] = {tail.size()};
+        ax.hist(data, counts, nullptr, 1, o);
+    }
+    {
+        vpl::Axes &ax = fig.add_subplot(1, 2, 2);
+        vpl::HistOptions o;
+        o.bins = 15;
+        o.type = vpl::HistType::Step;
+        o.log = true;
+        o.horizontal = true;
+        const double *data[] = {tail.data()};
+        const std::size_t counts[] = {tail.size()};
+        ax.hist(data, counts, nullptr, 1, o);
+    }
     return fig;
 }
 
@@ -2860,6 +3543,51 @@ int main()
 
     vpl::Figure density = make_hist_density();
     compare("hist_density", density, fonts);
+
+    vpl::Figure hopt = make_hist_options();
+    compare("hist_options", hopt, fonts);
+
+    vpl::Figure hhor = make_hist_horizontal();
+    compare("hist_horizontal", hhor, fonts);
+
+    vpl::Figure hlog = make_hist_log();
+    compare("hist_log", hlog, fonts);
+
+    vpl::Figure ebf = make_errorbar_full();
+    compare("errorbar_full", ebf, fonts);
+
+    vpl::Figure pief = make_pie_full();
+    compare("pie_full", pief, fonts);
+
+    vpl::Figure cauto = make_contour_auto();
+    compare("contour_auto", cauto, fonts);
+
+    vpl::Figure hexf = make_hexbin_full();
+    compare("hexbin_full", hexf, fonts);
+
+    vpl::Figure violf = make_violin_full();
+    compare("violin_full", violf, fonts);
+
+    vpl::Figure xcf = make_xcorr_full();
+    compare("xcorr_full", xcf, fonts);
+
+    vpl::Figure boxf = make_boxplot_full();
+    compare("boxplot_full", boxf, fonts);
+
+    vpl::Figure qcol = make_quiver_colors();
+    compare("quiver_colors", qcol, fonts);
+
+    vpl::Figure trix = make_tri_explicit();
+    compare("tri_explicit", trix, fonts);
+
+    vpl::Figure com = make_contour_over_mesh();
+    compare("contour_over_mesh", com, fonts);
+
+    vpl::Figure ebl = make_errorbar_limits();
+    compare("errorbar_limits", ebl, fonts);
+
+    vpl::Figure hlm = make_hexbin_log_marginals();
+    compare("hexbin_log_marginals", hlm, fonts);
 
     vpl::Figure fixed = make_fixed_ticks();
     compare("fixed_ticks", fixed, fonts);
