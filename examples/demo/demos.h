@@ -222,7 +222,8 @@ static const VplDemoInfo kVplDemos[VplDemo_Count] = {
      "staff points INTO the wind, every staff is the same length, and the "
      "speed is spelled out in flags (50), full barbs (10) and half barbs (5). "
      "Speeds are rounded to the nearest half barb first, so 23 and 27 draw the "
-     "same. A calm reading is a bare circle.",
+     "same. A calm reading is a bare circle. Here flagcolor picks out the "
+     "pennants, barbcolor the rest.",
      "vplAxesBarbs"},
     {"Streamlines", "streamplot",
      "Streamlines integrated through a vector field with an adaptive RK12 "
@@ -1055,7 +1056,17 @@ static VplResult vplBuildDemo(VplDemoId id, const VplDemoParams *p, VplFigure **
                     bu[i] = mags[i] * cos(ang);
                     bv[i] = mags[i] * sin(ang);
                 }
-                vplAxesBarbs(ax, bx, by, bu, bv, 12, NULL);
+                VplBarbsDesc bd;
+                memset(&bd, 0, sizeof(bd));
+                bd.structSize = sizeof(bd);
+                bd.set = VplBarbsField_BarbColor | VplBarbsField_FlagColor;
+                bd.barbColorSpec = "0.2";
+                bd.flagColorSpec = "tab:red";
+                vplAxesBarbs(ax, bx, by, bu, bv, 12, &bd);
+                /* Limits fit the stations only (a barb is sized in points),
+                   so leave room for the staffs. */
+                vplAxesSetXLim(ax, -0.6, 3.6);
+                vplAxesSetYLim(ax, -0.6, 2.6);
                 vplAxesSetXLabel(ax, "station");
                 break;
             }

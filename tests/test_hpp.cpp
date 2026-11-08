@@ -102,6 +102,11 @@ int main()
                 qd.scaleUnits = VplQuiverUnits_XY;
                 qd.scale = 1.0;
                 a.quiver({0, 1}, {0, 1}, {1, 0}, {0, 1}, qd);  // quiver(..., angles='xy', scale_units='xy', scale=1)
+                VplBarbsDesc bd{};
+                bd.set = VplBarbsField_BarbColor | VplBarbsField_FlagColor;
+                bd.barbColorSpec = "k";
+                bd.flagColorSpec = "tab:red";
+                a.barbs({0, 1}, {0, 1}, {60, 5}, {0, 12}, bd);  // barbs(..., barbcolor='k', flagcolor='tab:red')
             }
             {
                 VplBoxDesc bd{};

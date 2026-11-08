@@ -1031,6 +1031,42 @@ int main(void)
         check(vplTriangulate(tx, ty, 4, out, 2, &nt), "triangulate");
     }
 
+    /* barbs' later options, their validation, and the original desc size. */
+    {
+        static const double bx[3] = {0, 1, 2}, by[3] = {0, 0, 0};
+        static const double bu[3] = {0, 30, 60}, bv[3] = {0, 10, -5}, bc[3] = {1, 2, NAN};
+        static const uint8_t bf[3] = {0, 1, 0};
+        VplBarbsDesc bd;
+        memset(&bd, 0, sizeof(bd));
+        bd.structSize = sizeof(bd);
+        bd.set = VplBarbsField_C | VplBarbsField_Sizes | VplBarbsField_Flips |
+                 VplBarbsField_PivotValue | VplBarbsField_BarbColor;
+        bd.C = bc;
+        bd.cmap = VplColormap_Inferno;
+        bd.spacing = 0.2;
+        bd.height = 0.5;
+        bd.width = 0.3;
+        bd.emptyBarb = 0.2;
+        bd.flips = bf;
+        bd.pivotValue = -1.5;
+        bd.barbColorSpec = "k";
+        check(vplAxesBarbs(ax3, bx, by, bu, bv, 3, &bd), "barbs(C, sizes, flips, pivot)");
+        bd.flagColorSpec = "nope";
+        bd.set |= VplBarbsField_FlagColor;
+        expect_invalid(vplAxesBarbs(ax3, bx, by, bu, bv, 3, &bd), "barbs(bad flag colour)");
+        bd.set &= ~(uint32_t)VplBarbsField_FlagColor;
+        bd.spacing = -1.0;
+        expect_invalid(vplAxesBarbs(ax3, bx, by, bu, bv, 3, &bd), "barbs(negative spacing)");
+        bd.spacing = 0.2;
+        bd.flips = NULL;
+        expect_invalid(vplAxesBarbs(ax3, bx, by, bu, bv, 3, &bd), "barbs(flips flag, no flips)");
+        memset(&bd, 0, sizeof(bd));
+        bd.structSize = offsetof(VplBarbsDesc, spacing); /* an older caller */
+        bd.set = VplBarbsField_Length;
+        bd.length = 5.0;
+        check(vplAxesBarbs(ax3, bx, by, bu, bv, 3, &bd), "barbs(original desc size)");
+    }
+
     /* quiver's per-arrow colours, and that the original desc size still works. */
     {
         static const double qx[3] = {0, 1, 2}, qy[3] = {0, 1, 0};

@@ -6026,18 +6026,66 @@ void Axes::draw_quivers(Renderer &renderer, const Bbox &box, double px_per_pt)
            square is matplotlib's "empirically determined"). */
         const double px_scale = (b.length / 2.0) * renderer.dpi() / 72.0;
 
-        const double spacing = b.length * 0.125;
-        const double full_height = b.length * 0.4;
-        const double full_width = b.length * 0.25;
-        const double empty_rad = b.length * 0.15;
-        const double endy = b.pivot_middle ? -b.length / 2.0 : 0.0;
+        const double spacing = b.length * b.spacing;
+        const double full_height = b.length * b.height;
+        const double full_width = b.length * b.width;
+        const double empty_rad = b.length * b.emptybarb;
+        const double endy = b.has_pivot_value ? b.pivot_value
+                            : b.pivot_middle  ? -b.length / 2.0
+                                              : 0.0;
 
-        Path path;
+        /* Colours: barbcolor/flagcolor as matplotlib resolves them, and with
+           C a face colour per barb normalised over the finite C values. */
+        const bool mapped = !b.c.empty();
+        const Color face0 = b.has_flagcolor ? b.flagcolor
+                            : b.has_barbcolor ? b.barbcolor
+                                              : b.color;
+        const bool fixed_edge = b.has_barbcolor && b.has_flagcolor;
+        double cmin = b.vmin, cmax = b.vmax;
+        if (mapped && !b.has_vlimits) {
+            cmin = std::numeric_limits<double>::infinity();
+            cmax = -cmin;
+            for (double cv : b.c) {
+                if (std::isfinite(cv)) {
+                    cmin = std::min(cmin, cv);
+                    cmax = std::max(cmax, cv);
+                }
+            }
+        }
+
+        GraphicsContext gc;
+        /* edgecolors='face' and linewidth 1: most of the polygon is degenerate,
+           so without a stroke only the flags would show. */
+        gc.linewidth = b.linewidth;
+        gc.join = JoinStyle::Round;
+        gc.has_cliprect = true;
+        gc.cliprect = box;
+
+        Path shared;
         for (std::size_t i = 0; i < n; ++i) {
             const Point p = to_display(Point{scale_x(b.x[i]), scale_y(b.y[i])});
-            if (!std::isfinite(p.x) || !std::isfinite(p.y)) {
+            if (!std::isfinite(p.x) || !std::isfinite(p.y) || !std::isfinite(b.u[i]) ||
+                !std::isfinite(b.v[i])) {
                 continue;
             }
+            if (mapped && (i >= b.c.size() || !std::isfinite(b.c[i]))) {
+                continue;
+            }
+            const bool flip_i = b.flips.empty() ? b.flip
+                                                : (i < b.flips.size() && b.flips[i] != 0);
+            /* With per-barb colours each barb is its own path; otherwise one
+               path holds them all. */
+            Path one;
+            Path &path = mapped ? one : shared;
+            const auto finish = [&]() {
+                if (!mapped || one.size() == 0) {
+                    return;
+                }
+                const Color face =
+                    colormap_lookup(b.cmap, normalize(b.c[i], cmin, cmax));
+                gc.color = fixed_edge ? b.barbcolor : face;
+                renderer.draw_path(gc, one, Affine2D(), &face);
+            };
 
             /* How many of each feature (_find_tails). Magnitude is first rounded
                to the nearest half-barb, so 27 and 23 both read as two and a half. */
@@ -6088,10 +6136,11 @@ void Axes::draw_quivers(Renderer &renderer, const Bbox &box, double px_per_pt)
                     }
                 }
                 path.close_poly();
+                finish();
                 continue;
             }
 
-            const double bh = b.flip ? -full_height : full_height;
+            const double bh = flip_i ? -full_height : full_height;
             double offset = b.length;
             verts.push_back(Point{0.0, endy});
 
@@ -6134,21 +6183,14 @@ void Axes::draw_quivers(Renderer &renderer, const Bbox &box, double px_per_pt)
                 }
             }
             path.close_poly();
+            finish();
         }
 
-        if (path.size() == 0) {
+        if (mapped || shared.size() == 0) {
             continue;
         }
-
-        GraphicsContext gc;
-        /* edgecolors='face' and linewidth 1: most of the polygon is degenerate,
-           so without a stroke only the flags would show. */
-        gc.color = b.color;
-        gc.linewidth = b.linewidth;
-        gc.join = JoinStyle::Round;
-        gc.has_cliprect = true;
-        gc.cliprect = box;
-        renderer.draw_path(gc, path, Affine2D(), &b.color);
+        gc.color = fixed_edge ? b.barbcolor : face0;
+        renderer.draw_path(gc, shared, Affine2D(), &face0);
     }
 
     /*

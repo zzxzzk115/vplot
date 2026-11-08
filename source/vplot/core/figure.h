@@ -749,10 +749,34 @@ struct BarbField
     bool flip = false;
     /* Fill the circle that stands for a calm reading, rather than outlining it. */
     bool fill_empty = false;
-    /* 'tip' puts the data point at the staff's tip; 'middle' at its centre. */
+    /* 'tip' puts the data point at the staff's tip; 'middle' at its centre;
+       a number puts it that far along the staff (pivot=float). */
     bool pivot_middle = false;
+    bool has_pivot_value = false;
+    double pivot_value = 0.0;
+    /* flip_barb as an array: one flag per barb (overrides `flip`). */
+    std::vector<std::uint8_t> flips;
+
+    /* sizes=: fractions of the length. */
+    double spacing = 0.125;
+    double height = 0.4;
+    double width = 0.25;
+    double emptybarb = 0.15;
 
     Color color = Color::rgb(0.0, 0.0, 0.0);
+    /* barbcolor / flagcolor. One alone colours everything (edges follow the
+       face); both give the edges barbcolor and the faces flagcolor. */
+    bool has_barbcolor = false;
+    Color barbcolor;
+    bool has_flagcolor = false;
+    Color flagcolor;
+    /* barbs(X, Y, U, V, C): the face colour per barb through `cmap`; a barb
+       whose C is not finite is dropped, as matplotlib masks it. */
+    std::vector<double> c;
+    Colormap cmap = Colormap::Viridis;
+    bool has_vlimits = false;
+    double vmin = 0.0;
+    double vmax = 0.0;
     double linewidth = 1.0;
     std::string label;
 };

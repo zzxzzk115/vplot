@@ -979,6 +979,55 @@ vpl::Figure make_quiver_units()
     return fig;
 }
 
+/* Mirrors case_barbs_options in tools/gen_references.py. */
+vpl::Figure make_barbs_options()
+{
+    const double mags[12] = {0.0, 4.0, 12.0, 23.0, 35.0, 55.0, 65.0, 80.0, 7.0, 18.0, 45.0, 2.0};
+    std::vector<double> xs, ys, us, vs, cs;
+    std::vector<uint8_t> flips;
+    for (int k = 0; k < 12; ++k) {
+        xs.push_back(k % 4);
+        ys.push_back(k / 4);
+        const double a = 0.6 * k;
+        us.push_back(mags[k] * std::cos(a));
+        vs.push_back(mags[k] * std::sin(a));
+        cs.push_back(mags[k]);
+        flips.push_back(k % 2 == 1 ? 1 : 0);
+    }
+    vpl::Figure fig;
+    vpl::Axes &a1 = fig.add_subplot(2, 1, 1);
+    VplAxes *ax1 = reinterpret_cast<VplAxes *>(&a1);
+    VplBarbsDesc d{};
+    d.structSize = sizeof(d);
+    d.set = VplBarbsField_C | VplBarbsField_Length | VplBarbsField_Sizes;
+    d.C = cs.data();
+    d.cmap = VplColormap_Plasma;
+    d.length = 6.0;
+    d.spacing = 0.2;
+    d.height = 0.5;
+    d.width = 0.25;
+    d.emptyBarb = 0.25;
+    vplAxesBarbs(ax1, xs.data(), ys.data(), us.data(), vs.data(), 12, &d);
+    a1.set_xlim(-0.5, 3.5);
+    a1.set_ylim(-0.5, 2.5);
+
+    vpl::Axes &a2 = fig.add_subplot(2, 1, 2);
+    VplAxes *ax2 = reinterpret_cast<VplAxes *>(&a2);
+    d = VplBarbsDesc{};
+    d.structSize = sizeof(d);
+    d.set = VplBarbsField_BarbColor | VplBarbsField_FlagColor | VplBarbsField_Flips |
+            VplBarbsField_PivotValue | VplBarbsField_FillEmpty;
+    d.barbColorSpec = "tab:blue";
+    d.flagColorSpec = "tab:red";
+    d.flips = flips.data();
+    d.pivotValue = -2.0;
+    d.fillEmpty = 1;
+    vplAxesBarbs(ax2, xs.data(), ys.data(), us.data(), vs.data(), 12, &d);
+    a2.set_xlim(-0.5, 3.5);
+    a2.set_ylim(-0.5, 2.5);
+    return fig;
+}
+
 /* Mirrors case_quiver_colors in tools/gen_references.py. */
 vpl::Figure make_quiver_colors()
 {
@@ -3677,6 +3726,9 @@ int main()
 
     vpl::Figure qun = make_quiver_units();
     compare("quiver_units", qun, fonts);
+
+    vpl::Figure bop = make_barbs_options();
+    compare("barbs_options", bop, fonts);
 
     vpl::Figure fixed = make_fixed_ticks();
     compare("fixed_ticks", fixed, fonts);

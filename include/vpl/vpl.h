@@ -965,6 +965,12 @@ typedef enum VplBarbsField
     VplBarbsField_PivotMiddle = 1u << 5,
     VplBarbsField_ColorSpec = 1u << 6,
     VplBarbsField_LineWidth = 1u << 7,
+    VplBarbsField_Sizes = 1u << 8,      /* spacing, height, width, emptyBarb */
+    VplBarbsField_BarbColor = 1u << 9,  /* barbColorSpec */
+    VplBarbsField_FlagColor = 1u << 10, /* flagColorSpec */
+    VplBarbsField_C = 1u << 11,         /* C, cmap, and with hasVLimits vmin/vmax */
+    VplBarbsField_Flips = 1u << 12,     /* flips: one flag per barb */
+    VplBarbsField_PivotValue = 1u << 13, /* pivotValue: pivot=<float> */
 } VplBarbsField;
 
 typedef struct VplBarbsDesc
@@ -982,6 +988,29 @@ typedef struct VplBarbsDesc
     int pivotMiddle;
     const char *colorSpec;
     double lineWidth;
+
+    /* Added later, so read only when structSize covers them. */
+    /* sizes=: fractions of the length (matplotlib: 0.125, 0.4, 0.25, 0.15). */
+    double spacing;
+    double height;
+    double width;
+    double emptyBarb;
+    /* barbcolor= and flagcolor=. One alone colours the whole barb; both give
+       the outlines barbcolor and the flags flagcolor. */
+    const char *barbColorSpec;
+    const char *flagColorSpec;
+    /* barbs(X, Y, U, V, C): count values coloured through cmap; a barb with
+       a non-finite C is left out. */
+    const double *C;
+    VplColormap cmap;
+    int32_t hasVLimits;
+    double vmin;
+    double vmax;
+    /* flip_barb as an array: count flags. */
+    const uint8_t *flips;
+    /* pivot=<float>: the data point sits this far along the staff, in the
+       length's units (0 is the tip, -length / 2 the middle). */
+    double pivotValue;
 } VplBarbsDesc;
 
 /* Wind barbs -- barbs. A meteorological convention, not a general vector plot:

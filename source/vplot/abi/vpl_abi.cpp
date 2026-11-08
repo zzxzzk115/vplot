@@ -3269,9 +3269,53 @@ VplResult VPL_CALL vplAxesBarbs(VplAxes *axes,
         set_error("count is 0");
         return VplResult_InvalidArgument;
     }
-    if (desc != nullptr && desc->structSize != sizeof(VplBarbsDesc)) {
+    /* The struct has grown: the original size is still accepted, and the
+       later fields read only when structSize covers them. */
+    constexpr size_t kBarbsDescV1 = offsetof(VplBarbsDesc, lineWidth) + sizeof(double);
+    if (desc != nullptr &&
+        (desc->structSize < kBarbsDescV1 || desc->structSize > sizeof(VplBarbsDesc))) {
         set_error("VplBarbsDesc.structSize does not match this header");
         return VplResult_InvalidArgument;
+    }
+    const bool barbs_v2 = desc != nullptr && desc->structSize >= sizeof(VplBarbsDesc);
+    vpl::Color barb_color, flag_color;
+    vpl::Colormap barb_cmap = vpl::Colormap::Viridis;
+    if (barbs_v2) {
+        if ((desc->set & VplBarbsField_Sizes) != 0 &&
+            (!(desc->spacing >= 0.0) || !(desc->height >= 0.0) || !(desc->width >= 0.0) ||
+             !(desc->emptyBarb >= 0.0) ||
+             !std::isfinite(desc->spacing + desc->height + desc->width + desc->emptyBarb))) {
+            set_error("barb sizes must be finite and non-negative");
+            return VplResult_InvalidArgument;
+        }
+        if ((desc->set & VplBarbsField_BarbColor) != 0 &&
+            (desc->barbColorSpec == nullptr || !vpl::parse_color(desc->barbColorSpec, barb_color))) {
+            set_error("unrecognized barbColorSpec");
+            return VplResult_InvalidArgument;
+        }
+        if ((desc->set & VplBarbsField_FlagColor) != 0 &&
+            (desc->flagColorSpec == nullptr || !vpl::parse_color(desc->flagColorSpec, flag_color))) {
+            set_error("unrecognized flagColorSpec");
+            return VplResult_InvalidArgument;
+        }
+        if ((desc->set & VplBarbsField_C) != 0) {
+            if (desc->C == nullptr || !to_colormap(desc->cmap, barb_cmap)) {
+                set_error("VplBarbsField_C needs C and a known colormap");
+                return VplResult_InvalidArgument;
+            }
+            if (desc->hasVLimits != 0 && !(desc->vmax > desc->vmin)) {
+                set_error("vmin must be below vmax");
+                return VplResult_InvalidArgument;
+            }
+        }
+        if ((desc->set & VplBarbsField_Flips) != 0 && desc->flips == nullptr) {
+            set_error("VplBarbsField_Flips needs flips");
+            return VplResult_InvalidArgument;
+        }
+        if ((desc->set & VplBarbsField_PivotValue) != 0 && !std::isfinite(desc->pivotValue)) {
+            set_error("pivotValue must be finite");
+            return VplResult_InvalidArgument;
+        }
     }
 
     vpl::BarbField &b = axes_of(axes)->barbs(x, y, u, v, count);
@@ -3316,6 +3360,36 @@ VplResult VPL_CALL vplAxesBarbs(VplAxes *axes,
     }
     if ((desc->set & VplBarbsField_LineWidth) != 0) {
         b.linewidth = desc->lineWidth;
+    }
+    if (barbs_v2) {
+        if ((desc->set & VplBarbsField_Sizes) != 0) {
+            b.spacing = desc->spacing;
+            b.height = desc->height;
+            b.width = desc->width;
+            b.emptybarb = desc->emptyBarb;
+        }
+        if ((desc->set & VplBarbsField_BarbColor) != 0) {
+            b.has_barbcolor = true;
+            b.barbcolor = barb_color;
+        }
+        if ((desc->set & VplBarbsField_FlagColor) != 0) {
+            b.has_flagcolor = true;
+            b.flagcolor = flag_color;
+        }
+        if ((desc->set & VplBarbsField_C) != 0) {
+            b.c.assign(desc->C, desc->C + count);
+            b.cmap = barb_cmap;
+            b.has_vlimits = desc->hasVLimits != 0;
+            b.vmin = desc->vmin;
+            b.vmax = desc->vmax;
+        }
+        if ((desc->set & VplBarbsField_Flips) != 0) {
+            b.flips.assign(desc->flips, desc->flips + count);
+        }
+        if ((desc->set & VplBarbsField_PivotValue) != 0) {
+            b.has_pivot_value = true;
+            b.pivot_value = desc->pivotValue;
+        }
     }
     return VplResult_Success;
     VPL_CATCH

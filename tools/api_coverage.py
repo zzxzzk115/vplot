@@ -257,10 +257,12 @@ STATUS = {
         "separate label colour",
     ),
     "barbs": (
-        PARTIAL,
+        FULL,
         "vplAxesBarbs",
-        "the full flag/barb/half-barb decomposition with rounding, flip and "
-        "both pivots; no per-barb colour or colormap, no custom sizes dict",
+        "the full flag/barb/half-barb decomposition with barb_increments, "
+        "rounding, flip_barb (one or per barb), tip/middle/numeric pivot, "
+        "length, the sizes dict, fill_empty, barbcolor/flagcolor and per-barb "
+        "colour from C through a colormap",
     ),
     "streamplot": (
         PARTIAL,

@@ -2200,6 +2200,37 @@ def case_quiver_units():
     save(fig, "quiver_units")
 
 
+def case_barbs_options():
+    """barbs' per-barb colour from C (plasma), custom sizes and length, then
+    barbcolor + flagcolor with per-barb flip_barb, a numeric pivot and
+    fill_empty."""
+    import math
+
+    xs, ys, us, vs, cs, flips = [], [], [], [], [], []
+    mags = [0.0, 4.0, 12.0, 23.0, 35.0, 55.0, 65.0, 80.0, 7.0, 18.0, 45.0, 2.0]
+    for k, m in enumerate(mags):
+        xs.append(float(k % 4))
+        ys.append(float(k // 4))
+        a = 0.6 * k
+        us.append(m * math.cos(a))
+        vs.append(m * math.sin(a))
+        cs.append(m)
+        flips.append(k % 2 == 1)
+
+    fig = plt.figure(figsize=(6.4, 4.8), dpi=100)
+    ax1 = fig.add_subplot(2, 1, 1)
+    ax1.barbs(xs, ys, us, vs, cs, cmap="plasma", length=6,
+              sizes=dict(emptybarb=0.25, spacing=0.2, height=0.5))
+    ax1.set_xlim(-0.5, 3.5)
+    ax1.set_ylim(-0.5, 2.5)
+    ax2 = fig.add_subplot(2, 1, 2)
+    ax2.barbs(xs, ys, us, vs, barbcolor="tab:blue", flagcolor="tab:red",
+              flip_barb=flips, pivot=-2.0, fill_empty=True)
+    ax2.set_xlim(-0.5, 3.5)
+    ax2.set_ylim(-0.5, 2.5)
+    save(fig, "barbs_options")
+
+
 def _contour_field():
     """A 30 x 40 closed-form field spanning about -1.4 .. 1.6, off-centre."""
     import math
@@ -2942,6 +2973,7 @@ CASES = [
     case_hexbin_log_marginals,
     case_pie_shadow_donut,
     case_quiver_units,
+    case_barbs_options,
 ]
 
 

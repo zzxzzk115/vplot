@@ -1080,6 +1080,14 @@ class Axes
         detail::check(vplAxesBarbs(m_raw, x.data(), y.data(), u.data(), v.data(), n,
                                    nullptr));
     }
+    /* barbs with its keyword arguments in a VplBarbsDesc (sizes, barbcolor,
+       flagcolor, C and cmap, flip_barb, pivot, ...); structSize is filled in. */
+    void barbs(detail::Seq x, detail::Seq y, detail::Seq u, detail::Seq v, VplBarbsDesc desc)
+    {
+        const std::size_t n = std::min({x.size(), y.size(), u.size(), v.size()});
+        desc.structSize = sizeof(desc);
+        detail::check(vplAxesBarbs(m_raw, x.data(), y.data(), u.data(), v.data(), n, &desc));
+    }
     void streamplot(detail::Seq x, detail::Seq y, detail::Seq u, detail::Seq v,
                     std::size_t rows, std::size_t cols, double density = 1.0)
     {
