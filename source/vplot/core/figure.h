@@ -13,6 +13,7 @@
 #include <cstdint>
 #include <limits>
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -848,6 +849,27 @@ struct BoxStats
     double cihi = std::numeric_limits<double>::quiet_NaN();
 };
 
+/*
+ * One of bxp's *props dictionaries: each set field overrides the element's
+ * rcParams default, as matplotlib merges them. The patch-only fields
+ * (facecolor, edgecolor, alpha) apply to a patch_artist box, where `color`
+ * sets face and edge together, as Patch's color does.
+ */
+struct BoxElementProps
+{
+    std::optional<Color> color;
+    std::optional<double> linewidth;
+    std::optional<LineStyle> linestyle;
+    std::optional<MarkerStyle> marker;
+    std::optional<double> markersize;
+    std::optional<Color> markerfacecolor;
+    std::optional<Color> markeredgecolor;
+    std::optional<double> markeredgewidth;
+    std::optional<Color> facecolor;
+    std::optional<Color> edgecolor;
+    std::optional<double> alpha;
+};
+
 /* bxp's (and so boxplot's) keyword arguments. Defaults reproduce bxp(stats). */
 struct BoxOptions
 {
@@ -864,6 +886,36 @@ struct BoxOptions
     bool manage_ticks = true;
     /* Tick labels, one per box; null labels each tick with its position. */
     const std::string *labels = nullptr;
+    /* Cap lengths, one per box; null for half the box width. */
+    const double *capwidths = nullptr;
+    BoxElementProps boxprops;
+    BoxElementProps whiskerprops;
+    BoxElementProps capprops;
+    BoxElementProps medianprops;
+    BoxElementProps meanprops;
+    BoxElementProps flierprops;
+    /* label=: one per box, empty for none; set on the box when it is a
+       patch, otherwise on the median line, as matplotlib does. */
+    const std::string *legend_labels = nullptr;
+};
+
+/* boxplot's summarizing arguments -- what cbook.boxplot_stats takes, plus the
+   per-box overrides boxplot applies after it. */
+struct BoxStatsOptions
+{
+    double whis = 1.5;
+    /* The whisker percentiles (0..100), instead of whis IQRs; null for none. */
+    const double *whis_percentiles = nullptr;
+    /* Resamples for a bootstrapped notch interval; 0 for the 1.57 IQR/sqrt(N)
+       rule. vplot draws its own resamples, so the notch matches numpy's only
+       in distribution. */
+    int bootstrap = 0;
+    /* autorange: a box with zero IQR has its whiskers at the data's range. */
+    bool autorange = false;
+    /* usermedians, one per box; NaN keeps the computed median. */
+    const double *usermedians = nullptr;
+    /* conf_intervals, a (lo, hi) pair per box; a NaN keeps that end. */
+    const double *conf_intervals = nullptr;
 };
 
 struct ContourSet
@@ -1692,6 +1744,8 @@ class Axes
     void boxplot(const double *values, const std::size_t *counts, std::size_t ngroups);
     /* `whis` reaches that many IQRs past the quartiles; with `whis_percentiles`
        (two values, 0..100) the whiskers sit at those percentiles instead. */
+    void boxplot(const double *values, const std::size_t *counts, std::size_t ngroups,
+                 const BoxOptions &options, const BoxStatsOptions &stats_options);
     void boxplot(const double *values, const std::size_t *counts, std::size_t ngroups,
                  const BoxOptions &options, double whis = 1.5,
                  const double *whis_percentiles = nullptr);

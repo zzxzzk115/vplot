@@ -1545,6 +1545,46 @@ VPL_API VplResult VPL_CALL vplAxesBxp(VplAxes *axes,
                                       const VplBoxStats *stats,
                                       size_t groupCount);
 
+/* Which fields of a VplBoxProps are set. */
+typedef enum VplBoxPropsField
+{
+    VplBoxProps_Color = 1u << 0,
+    VplBoxProps_LineWidth = 1u << 1,
+    VplBoxProps_LineStyle = 1u << 2,
+    VplBoxProps_Marker = 1u << 3,
+    VplBoxProps_MarkerSize = 1u << 4,
+    VplBoxProps_MarkerFaceColor = 1u << 5,
+    VplBoxProps_MarkerEdgeColor = 1u << 6,
+    VplBoxProps_MarkerEdgeWidth = 1u << 7,
+    /* A patch_artist box only (boxProps): */
+    VplBoxProps_FaceColor = 1u << 8,
+    VplBoxProps_EdgeColor = 1u << 9,
+    VplBoxProps_Alpha = 1u << 10,
+} VplBoxPropsField;
+
+/* One of boxplot's *props dictionaries (boxprops, whiskerprops, capprops,
+   medianprops, meanprops, flierprops). Each set field overrides that
+   element's default; the rest keep matplotlib's rcParams values. On a
+   patch_artist box, colorSpec sets the edge in vplAxesBoxPlotFull (as
+   boxplot maps color to edgecolor) but face and edge in vplAxesBxpFull (as a
+   Patch's color does), and lineStyle must stay solid. */
+typedef struct VplBoxProps
+{
+    size_t structSize;
+    uint32_t set; /* VplBoxPropsField bits */
+    const char *colorSpec;
+    double lineWidth;
+    VplLineStyle lineStyle;
+    VplMarker marker;
+    double markerSize;
+    const char *markerFaceColorSpec;
+    const char *markerEdgeColorSpec;
+    double markerEdgeWidth;
+    const char *faceColorSpec;
+    const char *edgeColorSpec;
+    double alpha;
+} VplBoxProps;
+
 /* boxplot's and bxp's keyword arguments. Zero-initialised (with structSize
    set) it is the defaults. The negative-sense fields (hide..., noManageTicks)
    keep the zero value meaning matplotlib's default of True. */
@@ -1574,6 +1614,37 @@ typedef struct VplBoxDesc
     double whis;
     int32_t hasWhisPercentiles;
     double whisPercentiles[2];
+
+    /* capwidths: groupCount cap lengths in data units; NULL for half the box. */
+    const double *capWidths;
+    /* The style dictionaries; NULL keeps that element's defaults. */
+    const VplBoxProps *boxProps;
+    const VplBoxProps *whiskerProps;
+    const VplBoxProps *capProps;
+    const VplBoxProps *medianProps;
+    const VplBoxProps *meanProps;
+    const VplBoxProps *flierProps;
+    /* label=: groupCount legend labels (NULL entries unlabelled), set on each
+       box when it is a filled patch and otherwise on its median line. For
+       matplotlib's single string, set only the first. */
+    const char *const *legendLabels;
+
+    /* vplAxesBoxPlotFull only (they must stay zero for vplAxesBxpFull): */
+    /* usermedians: groupCount medians drawn instead of the computed ones; a
+       NaN entry keeps the computed median. */
+    const double *userMedians;
+    /* conf_intervals: groupCount (lo, hi) pairs for the notch ends; a NaN end
+       keeps the computed one. */
+    const double *confIntervals;
+    /* bootstrap: resamples for the notch interval, 0 for 1.57 IQR/sqrt(N).
+       vplot draws its own (seeded) resamples, so the interval agrees with
+       matplotlib's in distribution, not to the pixel. */
+    int32_t bootstrap;
+    /* autorange: a box whose IQR is zero takes whiskers at the data range. */
+    int32_t autorange;
+    /* sym: the flier format ("gD", "r+", ...), which overrides flierProps'
+       marker and colours; "" hides the fliers. NULL leaves them alone. */
+    const char *sym;
 } VplBoxDesc;
 
 /* boxplot with its keyword arguments. desc may be NULL. */

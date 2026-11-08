@@ -199,7 +199,8 @@ static const VplDemoInfo kVplDemos[VplDemo_Count] = {
      "vplAxesBoxPlot / vplAxesBxp"},
     {"Box plots (full)", "boxes_full",
      "patch_artist boxes with notches (the median's 95% interval) and mean "
-     "markers, laid horizontally with named ticks.",
+     "markers, laid horizontally with named ticks. boxprops fills them, "
+     "medianprops thickens the median, and sym='r+' marks the fliers.",
      "vplAxesBoxPlotFull"},
     {"Table", "table",
      "A grid of text under the axes, positioned in axes units rather than data "
@@ -1245,6 +1246,18 @@ static VplResult vplBuildDemo(VplDemoId id, const VplDemoParams *p, VplFigure **
                 bd.showMeans = 1;
                 bd.horizontal = 1;
                 bd.labels = names;
+                VplBoxProps boxp, medp;
+                memset(&boxp, 0, sizeof(boxp));
+                memset(&medp, 0, sizeof(medp));
+                boxp.structSize = medp.structSize = sizeof(VplBoxProps);
+                boxp.set = VplBoxProps_FaceColor;
+                boxp.faceColorSpec = "#c6dbef";
+                medp.set = VplBoxProps_Color | VplBoxProps_LineWidth;
+                medp.colorSpec = "tab:red";
+                medp.lineWidth = 2.0;
+                bd.boxProps = &boxp;
+                bd.medianProps = &medp;
+                bd.sym = "r+";
                 vplAxesBoxPlotFull(ax, bpv, bpc, 4, &bd);
                 vplAxesSetXLabel(ax, "value");
                 break;

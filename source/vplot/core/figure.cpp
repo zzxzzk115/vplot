@@ -3793,7 +3793,11 @@ void Axes::bxp(const BoxStats *stats, std::size_t ngroups, const BoxOptions &opt
         const double pos = positions[g];
         const double width = opt.widths != nullptr ? opt.widths[g] : auto_width;
         const double half = width / 2.0;
-        const double cap_half = width / 4.0; /* capwidths defaults to half the box */
+        /* capwidths defaults to half the box. */
+        const double cap_half = (opt.capwidths != nullptr ? opt.capwidths[g] : width / 2.0) / 2.0;
+        const std::string *legend_label =
+            opt.legend_labels != nullptr && !opt.legend_labels[g].empty() ? &opt.legend_labels[g]
+                                                                         : nullptr;
 
         /* A group with no summary draws nothing but still holds its position,
            as matplotlib does (an empty group keeps its slot). */
@@ -3809,6 +3813,36 @@ void Axes::bxp(const BoxStats *stats, std::size_t ngroups, const BoxOptions &opt
             Line2D &l = opt.horizontal ? push_line(lines, ys, xs, m) : push_line(lines, xs, ys, m);
             l.color = c;
             l.linewidth = 1.0;
+            return l;
+        };
+        /* A *props dictionary over the rcParams defaults already on the line. */
+        auto style = [](Line2D &l, const BoxElementProps &p) -> Line2D & {
+            if (p.color) {
+                l.color = *p.color;
+            }
+            if (p.linewidth) {
+                l.linewidth = *p.linewidth;
+            }
+            if (p.linestyle) {
+                l.linestyle = *p.linestyle;
+            }
+            if (p.marker) {
+                l.marker = *p.marker;
+            }
+            if (p.markersize) {
+                l.markersize = *p.markersize;
+            }
+            if (p.markeredgewidth) {
+                l.markeredgewidth = *p.markeredgewidth;
+            }
+            if (p.markerfacecolor) {
+                l.has_markerfacecolor = true;
+                l.markerfacecolor = *p.markerfacecolor;
+            }
+            if (p.markeredgecolor) {
+                l.has_markeredgecolor = true;
+                l.markeredgecolor = *p.markeredgecolor;
+            }
             return l;
         };
 
@@ -3843,52 +3877,71 @@ void Axes::bxp(const BoxStats *stats, std::size_t ngroups, const BoxOptions &opt
                     }
                 }
                 box->path.close_poly();
-                box->facecolor = Color::rgb(0.121569, 0.466667, 0.705882);
-                box->edgecolor = black;
-                box->linewidth = 1.0;
+                const BoxElementProps &bp = opt.boxprops;
+                box->facecolor = bp.facecolor.value_or(Color::rgb(0.121569, 0.466667, 0.705882));
+                box->edgecolor = bp.edgecolor.value_or(black);
+                if (bp.color) {
+                    /* Patch's color wins over facecolor and edgecolor. */
+                    box->facecolor = *bp.color;
+                    box->edgecolor = *bp.color;
+                }
+                box->linewidth = bp.linewidth.value_or(1.0);
+                box->alpha = bp.alpha.value_or(1.0);
                 box->line_tier = true;
+                if (legend_label != nullptr) {
+                    box->label = *legend_label;
+                }
                 patches.push_back(std::move(box));
             } else {
-                add(bx.data(), by.data(), bx.size(), black);
+                style(add(bx.data(), by.data(), bx.size(), black), opt.boxprops);
             }
         }
 
         const double wx[2] = {pos, pos};
         const double wlo[2] = {s.q1, s.whislo};
         const double whi[2] = {s.q3, s.whishi};
-        add(wx, wlo, 2, black);
-        add(wx, whi, 2, black);
+        style(add(wx, wlo, 2, black), opt.whiskerprops);
+        style(add(wx, whi, 2, black), opt.whiskerprops);
 
         if (opt.showcaps) {
             const double cx[2] = {pos - cap_half, pos + cap_half};
             const double clo[2] = {s.whislo, s.whislo};
             const double chi[2] = {s.whishi, s.whishi};
-            add(cx, clo, 2, black);
-            add(cx, chi, 2, black);
+            style(add(cx, clo, 2, black), opt.capprops);
+            style(add(cx, chi, 2, black), opt.capprops);
         }
 
         const double mx[2] = {med_l, med_r};
         const double my[2] = {s.med, s.med};
-        add(mx, my, 2, c1).butt_cap = true;
+        Line2D &median = style(add(mx, my, 2, c1), opt.medianprops);
+        median.butt_cap = true;
+        if (legend_label != nullptr && !(opt.showbox && opt.patch_artist)) {
+            median.label = *legend_label;
+        }
 
         if (opt.showmeans && std::isfinite(s.mean)) {
+            /* meanprops' rcParams carry both a marker and a dashed style;
+               meanline drops whichever does not apply unless meanprops sets
+               it explicitly. */
+            const BoxElementProps &mp = opt.meanprops;
+            Line2D *ml = nullptr;
             if (opt.meanline) {
                 const double lx[2] = {box_l, box_r};
                 const double ly[2] = {s.mean, s.mean};
-                Line2D &ml = add(lx, ly, 2, c2);
-                ml.linestyle = LineStyle::Dashed;
-                ml.butt_cap = true;
+                ml = &add(lx, ly, 2, c2);
             } else {
                 const double px[1] = {pos};
                 const double py[1] = {s.mean};
-                Line2D &ml = add(px, py, 1, c2);
-                ml.linestyle = LineStyle::None;
-                ml.marker = MarkerStyle::TriangleUp;
-                ml.has_markerfacecolor = true;
-                ml.markerfacecolor = c2;
-                ml.has_markeredgecolor = true;
-                ml.markeredgecolor = c2;
+                ml = &add(px, py, 1, c2);
             }
+            ml->linestyle = opt.meanline ? LineStyle::Dashed : LineStyle::None;
+            ml->marker = opt.meanline ? MarkerStyle::None : MarkerStyle::TriangleUp;
+            ml->has_markerfacecolor = true;
+            ml->markerfacecolor = c2;
+            ml->has_markeredgecolor = true;
+            ml->markeredgecolor = c2;
+            ml->butt_cap = true;
+            style(*ml, mp);
         }
 
         if (opt.showfliers && !s.fliers.empty()) {
@@ -3902,6 +3955,7 @@ void Axes::bxp(const BoxStats *stats, std::size_t ngroups, const BoxOptions &opt
             fl.markerfacecolor = Color::none();
             fl.has_markeredgecolor = true;
             fl.markeredgecolor = black;
+            style(fl, opt.flierprops);
         }
     }
 
@@ -3939,9 +3993,65 @@ void Axes::boxplot(const double *values, const std::size_t *counts, std::size_t 
 void Axes::boxplot(const double *values, const std::size_t *counts, std::size_t ngroups,
                    const BoxOptions &opt, double whis, const double *whis_percentiles)
 {
+    BoxStatsOptions so;
+    so.whis = whis;
+    so.whis_percentiles = whis_percentiles;
+    boxplot(values, counts, ngroups, opt, so);
+}
+
+namespace
+{
+
+/* np.median of a scratch buffer, which it reorders. */
+double median_inplace(std::vector<double> &v)
+{
+    const std::size_t n = v.size();
+    const std::size_t mid = n / 2;
+    std::nth_element(v.begin(), v.begin() + static_cast<std::ptrdiff_t>(mid), v.end());
+    const double hi = v[mid];
+    if (n % 2 == 1) {
+        return hi;
+    }
+    const double lo = *std::max_element(v.begin(), v.begin() + static_cast<std::ptrdiff_t>(mid));
+    return lo + (hi - lo) * 0.5;
+}
+
+/* cbook._bootstrap_median: the 2.5th and 97.5th percentiles of the medians of
+   `resamples` resamples (with replacement) of the data. The resamples come
+   from a fixed-seed splitmix64, so a plot is reproducible, though not
+   numpy's draw for draw. */
+void bootstrap_median(const std::vector<double> &data, int resamples, double &lo, double &hi)
+{
+    std::uint64_t state = 0x9E3779B97F4A7C15ull;
+    auto next = [&state]() {
+        std::uint64_t z = (state += 0x9E3779B97F4A7C15ull);
+        z = (z ^ (z >> 30)) * 0xBF58476D1CE4E5B9ull;
+        z = (z ^ (z >> 27)) * 0x94D049BB133111EBull;
+        return z ^ (z >> 31);
+    };
+    const std::size_t m = data.size();
+    std::vector<double> sample(m);
+    std::vector<double> estimates(static_cast<std::size_t>(resamples));
+    for (double &e : estimates) {
+        for (double &x : sample) {
+            x = data[static_cast<std::size_t>(next() % m)];
+        }
+        e = median_inplace(sample);
+    }
+    std::sort(estimates.begin(), estimates.end());
+    lo = percentile(estimates, 0.025);
+    hi = percentile(estimates, 0.975);
+}
+
+} // namespace
+
+void Axes::boxplot(const double *values, const std::size_t *counts, std::size_t ngroups,
+                   const BoxOptions &opt, const BoxStatsOptions &so)
+{
     if (ngroups == 0) {
         return;
     }
+    const double whis = so.whis;
 
     /* boxplot is bxp with a summarizer in front, as in matplotlib, so the two
        cannot draw a box differently. */
@@ -3982,15 +4092,23 @@ void Axes::boxplot(const double *values, const std::size_t *counts, std::size_t 
             sum += v;
         }
         s.mean = sum / static_cast<double>(sorted.size());
-        /* _compute_conf_interval without bootstrap: the notch is the median
+        /* _compute_conf_interval: a bootstrapped interval, or the median
            +/- 1.57 IQR / sqrt(N). */
-        const double notch = 1.57 * iqr / std::sqrt(static_cast<double>(sorted.size()));
-        s.cilo = s.med - notch;
-        s.cihi = s.med + notch;
+        if (so.bootstrap > 0) {
+            bootstrap_median(sorted, so.bootstrap, s.cilo, s.cihi);
+        } else {
+            const double notch = 1.57 * iqr / std::sqrt(static_cast<double>(sorted.size()));
+            s.cilo = s.med - notch;
+            s.cihi = s.med + notch;
+        }
 
         /* The whisker reaches the furthest datum within whis IQR (or inside
            the given percentiles), not the bound itself, so it always ends on a
-           real observation. */
+           real observation. autorange turns a zero-IQR box's rule into the
+           full range. */
+        const double full_range[2] = {0.0, 100.0};
+        const double *whis_percentiles =
+            iqr == 0.0 && so.autorange ? full_range : so.whis_percentiles;
         const double lo_bound = whis_percentiles != nullptr
                                     ? percentile(sorted, whis_percentiles[0] / 100.0)
                                     : s.q1 - whis * iqr;
@@ -4014,6 +4132,22 @@ void Axes::boxplot(const double *values, const std::size_t *counts, std::size_t 
             }
         }
         stats.push_back(std::move(s));
+    }
+
+    /* boxplot's overrides, after the summary: the notch interval was already
+       computed around the data's own median. */
+    for (std::size_t g = 0; g < ngroups; ++g) {
+        if (so.usermedians != nullptr && !std::isnan(so.usermedians[g])) {
+            stats[g].med = so.usermedians[g];
+        }
+        if (so.conf_intervals != nullptr) {
+            if (!std::isnan(so.conf_intervals[2 * g])) {
+                stats[g].cilo = so.conf_intervals[2 * g];
+            }
+            if (!std::isnan(so.conf_intervals[2 * g + 1])) {
+                stats[g].cihi = so.conf_intervals[2 * g + 1];
+            }
+        }
     }
 
     bxp(stats.data(), stats.size(), opt);
@@ -7405,7 +7539,11 @@ void Axes::draw_legend(Renderer &renderer, const Bbox &box, double px_per_pt)
        handle box is legend.handleheight font sizes tall on that baseline. */
     const double handleheight = 0.7 * fs;
 
-    double text_ascent = 0.0;
+    /* TextArea.get_bbox never lets a label stand shorter than "lp" does:
+       its ascent is at least that probe's, so a row of capitals ("A", "B")
+       is as tall as a row of "sin" and "cos". */
+    const double lp_ascent = renderer.text_line_metrics("lp", font).ascent;
+    double text_ascent = lp_ascent;
     double text_descent = 0.0;
     std::vector<double> entry_text_width(entries.size());
     for (std::size_t i = 0; i < entries.size(); ++i) {
@@ -7456,7 +7594,7 @@ void Axes::draw_legend(Renderer &renderer, const Bbox &box, double px_per_pt)
         const TextExtent e = renderer.measure_text(legend_title, font);
         const LineMetrics m = renderer.text_line_metrics(legend_title, font);
         title_width = e.width;
-        title_ascent = m.ascent;
+        title_ascent = std::max(m.ascent, lp_ascent);
         title_descent = m.descent;
     }
     const double title_height = has_title ? title_ascent + title_descent : 0.0;
@@ -7663,14 +7801,15 @@ void Axes::draw_legend(Renderer &renderer, const Bbox &box, double px_per_pt)
             draw_marker(sc->marker, std::sqrt(std::max(0.0, sc->size)), sc->color,
                         sc->has_edgecolor ? sc->edgecolor : sc->color, sc->linewidth);
         } else if (entry.patch != nullptr) {
-            /* A patch shows as a filled swatch across the handle. */
+            /* A patch shows as a filled swatch filling the handle box, as
+               HandlerPatch's Rectangle does: handlelength by handleheight. */
             const PolyPatch *patch = entry.patch;
             GraphicsContext gc;
             gc.alpha = patch->alpha;
             gc.color = patch->linewidth > 0.0 ? patch->edgecolor : Color::none();
             gc.linewidth = patch->linewidth;
             gc.join = JoinStyle::Miter;
-            const Bbox swatch(hx0, cy - row_height * 0.3, hx1, cy + row_height * 0.3);
+            const Bbox swatch(hx0, cy - handleheight / 2.0, hx1, cy + handleheight / 2.0);
             renderer.draw_path(gc, Path::rectangle(swatch), Affine2D(), &patch->facecolor);
         }
 

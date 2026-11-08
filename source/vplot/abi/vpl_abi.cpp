@@ -618,6 +618,18 @@ vpl::MarkerStyle to_marker(VplMarker m, bool &ok)
     return vpl::MarkerStyle::Circle;
 }
 
+bool to_line_style(VplLineStyle s, vpl::LineStyle &out)
+{
+    switch (s) {
+        case VplLineStyle_Solid: out = vpl::LineStyle::Solid; return true;
+        case VplLineStyle_Dashed: out = vpl::LineStyle::Dashed; return true;
+        case VplLineStyle_DashDot: out = vpl::LineStyle::DashDot; return true;
+        case VplLineStyle_Dotted: out = vpl::LineStyle::Dotted; return true;
+        case VplLineStyle_None: out = vpl::LineStyle::None; return true;
+        default: return false;
+    }
+}
+
 } // namespace
 
 VplResult VPL_CALL vplAxesScatter(VplAxes *axes,
@@ -4715,9 +4727,102 @@ VplResult VPL_CALL vplAxesBxp(VplAxes *axes, const VplBoxStats *stats, size_t gr
 namespace
 {
 
-/* VplBoxDesc to vpl::BoxOptions; `labels` owns the strings options points at. */
+/* Whether a caller's VplBoxDesc is new enough to hold `field`. */
+#define VPL_BOX_HAS(desc, field)                                                                    \
+    ((desc)->structSize >= offsetof(VplBoxDesc, field) + sizeof((desc)->field))
+
+void set_error_s(const std::string &message)
+{
+    set_error(message.c_str());
+}
+
+/* One VplBoxProps into vpl::BoxElementProps. `name` is for the message;
+   `patch_box` allows the patch-only fields. */
+VplResult box_props_from(const VplBoxProps *p, const char *name, bool patch_box,
+                         vpl::BoxElementProps &out)
+{
+    if (p == nullptr) {
+        return VplResult_Success;
+    }
+    if (p->structSize < sizeof(VplBoxProps)) {
+        set_error_s(std::string(name) + ".structSize is too small");
+        return VplResult_InvalidArgument;
+    }
+    auto color = [&](uint32_t bit, const char *spec, std::optional<vpl::Color> &dst) {
+        if ((p->set & bit) == 0) {
+            return true;
+        }
+        vpl::Color c;
+        if (spec == nullptr || !vpl::parse_color(spec, c)) {
+            set_error_s(std::string(name) + ": unrecognized colour spec");
+            return false;
+        }
+        dst = c;
+        return true;
+    };
+    const uint32_t patch_only = VplBoxProps_FaceColor | VplBoxProps_EdgeColor | VplBoxProps_Alpha;
+    if (!patch_box && (p->set & patch_only) != 0) {
+        set_error_s(std::string(name) +
+                  ": faceColor, edgeColor and alpha apply to a patch_artist box only");
+        return VplResult_InvalidArgument;
+    }
+    if (!color(VplBoxProps_Color, p->colorSpec, out.color) ||
+        !color(VplBoxProps_MarkerFaceColor, p->markerFaceColorSpec, out.markerfacecolor) ||
+        !color(VplBoxProps_MarkerEdgeColor, p->markerEdgeColorSpec, out.markeredgecolor) ||
+        !color(VplBoxProps_FaceColor, p->faceColorSpec, out.facecolor) ||
+        !color(VplBoxProps_EdgeColor, p->edgeColorSpec, out.edgecolor)) {
+        return VplResult_InvalidArgument;
+    }
+    auto size = [&](uint32_t bit, double v, std::optional<double> &dst) {
+        if ((p->set & bit) == 0) {
+            return true;
+        }
+        if (!(v >= 0.0) || !std::isfinite(v)) {
+            set_error_s(std::string(name) + ": sizes must be finite and non-negative");
+            return false;
+        }
+        dst = v;
+        return true;
+    };
+    if (!size(VplBoxProps_LineWidth, p->lineWidth, out.linewidth) ||
+        !size(VplBoxProps_MarkerSize, p->markerSize, out.markersize) ||
+        !size(VplBoxProps_MarkerEdgeWidth, p->markerEdgeWidth, out.markeredgewidth)) {
+        return VplResult_InvalidArgument;
+    }
+    if ((p->set & VplBoxProps_Alpha) != 0) {
+        if (!(p->alpha >= 0.0 && p->alpha <= 1.0)) {
+            set_error_s(std::string(name) + ": alpha must be in [0, 1]");
+            return VplResult_InvalidArgument;
+        }
+        out.alpha = p->alpha;
+    }
+    if ((p->set & VplBoxProps_LineStyle) != 0) {
+        vpl::LineStyle ls;
+        if (!to_line_style(p->lineStyle, ls)) {
+            set_error_s(std::string(name) + ": unknown line style");
+            return VplResult_InvalidArgument;
+        }
+        if (patch_box && ls != vpl::LineStyle::Solid) {
+            set_error_s(std::string(name) + ": a patch_artist box is drawn solid");
+            return VplResult_InvalidArgument;
+        }
+        out.linestyle = ls;
+    }
+    if ((p->set & VplBoxProps_Marker) != 0) {
+        bool ok = false;
+        out.marker = to_marker(p->marker, ok);
+        if (!ok) {
+            set_error_s(std::string(name) + ": unknown marker");
+            return VplResult_InvalidArgument;
+        }
+    }
+    return VplResult_Success;
+}
+
+/* VplBoxDesc to vpl::BoxOptions; `labels` and `legend` own the strings
+   options points at. */
 VplResult box_options_from(const VplBoxDesc *desc, size_t groupCount, vpl::BoxOptions &o,
-                           std::vector<std::string> &labels)
+                           std::vector<std::string> &labels, std::vector<std::string> &legend)
 {
     if (desc == nullptr) {
         return VplResult_Success;
@@ -4725,6 +4830,44 @@ VplResult box_options_from(const VplBoxDesc *desc, size_t groupCount, vpl::BoxOp
     if (desc->structSize == 0) {
         set_error("VplBoxDesc.structSize is 0");
         return VplResult_InvalidArgument;
+    }
+    o.patch_artist = desc->patchArtist != 0;
+    if (VPL_BOX_HAS(desc, legendLabels)) {
+        if (desc->capWidths != nullptr) {
+            for (size_t g = 0; g < groupCount; ++g) {
+                if (!(desc->capWidths[g] >= 0.0) || !std::isfinite(desc->capWidths[g])) {
+                    set_error("capWidths must be finite and non-negative");
+                    return VplResult_InvalidArgument;
+                }
+            }
+            o.capwidths = desc->capWidths;
+        }
+        const struct
+        {
+            const VplBoxProps *p;
+            const char *name;
+            vpl::BoxElementProps *dst;
+            bool patch;
+        } props[] = {
+            {desc->boxProps, "boxProps", &o.boxprops, o.patch_artist},
+            {desc->whiskerProps, "whiskerProps", &o.whiskerprops, false},
+            {desc->capProps, "capProps", &o.capprops, false},
+            {desc->medianProps, "medianProps", &o.medianprops, false},
+            {desc->meanProps, "meanProps", &o.meanprops, false},
+            {desc->flierProps, "flierProps", &o.flierprops, false},
+        };
+        for (const auto &e : props) {
+            const VplResult r = box_props_from(e.p, e.name, e.patch, *e.dst);
+            if (r != VplResult_Success) {
+                return r;
+            }
+        }
+        if (desc->legendLabels != nullptr) {
+            for (size_t g = 0; g < groupCount; ++g) {
+                legend.emplace_back(desc->legendLabels[g] != nullptr ? desc->legendLabels[g] : "");
+            }
+            o.legend_labels = legend.data();
+        }
     }
     if (desc->widths != nullptr) {
         for (size_t g = 0; g < groupCount; ++g) {
@@ -4751,7 +4894,6 @@ VplResult box_options_from(const VplBoxDesc *desc, size_t groupCount, vpl::BoxOp
     o.positions = desc->positions;
     o.widths = desc->widths;
     o.horizontal = desc->horizontal != 0;
-    o.patch_artist = desc->patchArtist != 0;
     o.shownotches = desc->showNotches != 0;
     o.showmeans = desc->showMeans != 0;
     o.meanline = desc->meanLine != 0;
@@ -4780,13 +4922,53 @@ VplResult VPL_CALL vplAxesBoxPlotFull(VplAxes *axes,
         return VplResult_InvalidArgument;
     }
     vpl::BoxOptions o;
-    std::vector<std::string> labels;
-    const VplResult r = box_options_from(desc, groupCount, o, labels);
+    std::vector<std::string> labels, legend;
+    const VplResult r = box_options_from(desc, groupCount, o, labels, legend);
     if (r != VplResult_Success) {
         return r;
     }
     double whis = 1.5;
     const double *pct = nullptr;
+    vpl::BoxStatsOptions so;
+    if (desc != nullptr && VPL_BOX_HAS(desc, sym)) {
+        /* boxplot, unlike bxp, maps a patch box's color to its edge. */
+        if (o.patch_artist && o.boxprops.color) {
+            o.boxprops.edgecolor = o.boxprops.color;
+            o.boxprops.color.reset();
+        }
+        if (desc->bootstrap < 0) {
+            set_error("bootstrap must be non-negative");
+            return VplResult_InvalidArgument;
+        }
+        so.bootstrap = desc->bootstrap;
+        so.autorange = desc->autorange != 0;
+        so.usermedians = desc->userMedians;
+        so.conf_intervals = desc->confIntervals;
+        if (desc->sym != nullptr) {
+            if (desc->sym[0] == '\0') {
+                /* sym='': invisible fliers, and none drawn. */
+                o.showfliers = false;
+            } else {
+                vpl::Color c;
+                vpl::LineStyle ls = vpl::LineStyle::None;
+                vpl::MarkerStyle mk = vpl::MarkerStyle::Circle;
+                bool hc = false, hls = false, hmk = false;
+                if (!vpl::parse_format(desc->sym, c, hc, ls, hls, mk, hmk)) {
+                    set_error("could not parse sym");
+                    return VplResult_InvalidArgument;
+                }
+                if (hmk) {
+                    o.flierprops.marker = mk;
+                }
+                if (hc) {
+                    /* A coloured sym means filled markers. */
+                    o.flierprops.color = c;
+                    o.flierprops.markerfacecolor = c;
+                    o.flierprops.markeredgecolor = c;
+                }
+            }
+        }
+    }
     if (desc != nullptr) {
         if (desc->whis < 0.0 || !std::isfinite(desc->whis)) {
             set_error("whis must be non-negative");
@@ -4805,7 +4987,9 @@ VplResult VPL_CALL vplAxesBoxPlotFull(VplAxes *axes,
             pct = desc->whisPercentiles;
         }
     }
-    axes_of(axes)->boxplot(values, counts, groupCount, o, whis, pct);
+    so.whis = whis;
+    so.whis_percentiles = pct;
+    axes_of(axes)->boxplot(values, counts, groupCount, o, so);
     return VplResult_Success;
     VPL_CATCH
 }
@@ -4828,10 +5012,17 @@ VplResult VPL_CALL vplAxesBxpFull(VplAxes *axes,
         return VplResult_InvalidArgument;
     }
     vpl::BoxOptions o;
-    std::vector<std::string> labels;
-    const VplResult r = box_options_from(desc, groupCount, o, labels);
+    std::vector<std::string> labels, legend;
+    const VplResult r = box_options_from(desc, groupCount, o, labels, legend);
     if (r != VplResult_Success) {
         return r;
+    }
+    if (desc != nullptr && VPL_BOX_HAS(desc, sym) &&
+        (desc->userMedians != nullptr || desc->confIntervals != nullptr || desc->bootstrap != 0 ||
+         desc->autorange != 0 || desc->sym != nullptr)) {
+        set_error("userMedians, confIntervals, bootstrap, autorange and sym are boxplot's; "
+                  "bxp takes the statistics directly");
+        return VplResult_InvalidArgument;
     }
     if (o.showmeans && means == nullptr) {
         set_error("showMeans needs the means");
@@ -6304,21 +6495,6 @@ VplResult VPL_CALL vplAxesSetPropCycle(VplAxes *axes,
     return VplResult_Success;
     VPL_CATCH
 }
-
-namespace
-{
-bool to_line_style(VplLineStyle s, vpl::LineStyle &out)
-{
-    switch (s) {
-        case VplLineStyle_Solid: out = vpl::LineStyle::Solid; return true;
-        case VplLineStyle_Dashed: out = vpl::LineStyle::Dashed; return true;
-        case VplLineStyle_DashDot: out = vpl::LineStyle::DashDot; return true;
-        case VplLineStyle_Dotted: out = vpl::LineStyle::Dotted; return true;
-        case VplLineStyle_None: out = vpl::LineStyle::None; return true;
-        default: return false;
-    }
-}
-} // namespace
 
 VplResult VPL_CALL vplAxesSetPropCycleFull(VplAxes *axes, const char *const *colorSpecs,
                                            size_t colorCount, const VplLineStyle *linestyles,

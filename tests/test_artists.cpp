@@ -1157,6 +1157,80 @@ int main(void)
         check(vplAxesBxpFull(ax3, &bs, 1, bmean, blo, bhi, &bd), "bxpFull(means, notches)");
         expect_invalid(vplAxesBxpFull(ax3, &bs, 1, NULL, blo, bhi, &bd), "bxpFull(no means)");
         expect_invalid(vplAxesBxpFull(ax3, &bs, 1, bmean, NULL, NULL, &bd), "bxpFull(no notches)");
+
+        /* The later fields: style dictionaries, capwidths, legend labels and
+           boxplot's per-box overrides. */
+        VplBoxProps face, median, flier;
+        memset(&face, 0, sizeof(face));
+        memset(&median, 0, sizeof(median));
+        memset(&flier, 0, sizeof(flier));
+        face.structSize = median.structSize = flier.structSize = sizeof(VplBoxProps);
+        face.set = VplBoxProps_FaceColor | VplBoxProps_Color | VplBoxProps_Alpha;
+        face.faceColorSpec = "tab:orange";
+        face.colorSpec = "k";
+        face.alpha = 0.5;
+        median.set = VplBoxProps_Color | VplBoxProps_LineWidth | VplBoxProps_LineStyle;
+        median.colorSpec = "tab:red";
+        median.lineWidth = 2.0;
+        median.lineStyle = VplLineStyle_Dotted;
+        flier.set = VplBoxProps_Marker | VplBoxProps_MarkerSize | VplBoxProps_MarkerEdgeWidth;
+        flier.marker = VplMarker_Star;
+        flier.markerSize = 8.0;
+        flier.markerEdgeWidth = 0.5;
+        static const double caps[2] = {0.1, 0.3};
+        static const double umed[2] = {NAN, 3.5};
+        static const double cis[4] = {NAN, NAN, 2.5, NAN};
+        static const char *const legend[2] = {"first", NULL};
+        memset(&bd, 0, sizeof(bd));
+        bd.structSize = sizeof(bd);
+        bd.patchArtist = 1;
+        bd.showNotches = 1;
+        bd.boxProps = &face;
+        bd.medianProps = &median;
+        bd.flierProps = &flier;
+        bd.capWidths = caps;
+        bd.legendLabels = legend;
+        bd.userMedians = umed;
+        bd.confIntervals = cis;
+        bd.bootstrap = 200;
+        bd.autorange = 1;
+        bd.sym = "gD";
+        check(vplAxesBoxPlotFull(ax3, bv, bc, 2, &bd), "boxPlotFull(props, overrides)");
+        bd.sym = "";
+        check(vplAxesBoxPlotFull(ax3, bv, bc, 2, &bd), "boxPlotFull(sym='')");
+        bd.sym = "q?";
+        expect_invalid(vplAxesBoxPlotFull(ax3, bv, bc, 2, &bd), "boxPlotFull(bad sym)");
+        bd.sym = NULL;
+        bd.bootstrap = -1;
+        expect_invalid(vplAxesBoxPlotFull(ax3, bv, bc, 2, &bd), "boxPlotFull(negative bootstrap)");
+        bd.bootstrap = 0;
+        bd.patchArtist = 0;
+        expect_invalid(vplAxesBoxPlotFull(ax3, bv, bc, 2, &bd), "boxPlotFull(faceColor on a line box)");
+        bd.patchArtist = 1;
+        face.set |= VplBoxProps_LineStyle;
+        face.lineStyle = VplLineStyle_Dashed;
+        expect_invalid(vplAxesBoxPlotFull(ax3, bv, bc, 2, &bd), "boxPlotFull(dashed patch box)");
+        face.set &= ~(uint32_t)VplBoxProps_LineStyle;
+        median.colorSpec = "not a colour";
+        expect_invalid(vplAxesBoxPlotFull(ax3, bv, bc, 2, &bd), "boxPlotFull(bad median colour)");
+        median.colorSpec = "tab:red";
+        median.structSize = 8;
+        expect_invalid(vplAxesBoxPlotFull(ax3, bv, bc, 2, &bd), "boxPlotFull(short props)");
+        median.structSize = sizeof(VplBoxProps);
+        static const double badcaps[2] = {0.1, -0.3};
+        bd.capWidths = badcaps;
+        expect_invalid(vplAxesBoxPlotFull(ax3, bv, bc, 2, &bd), "boxPlotFull(negative capwidth)");
+        bd.capWidths = caps;
+        /* bxp takes the statistics as given: boxplot's overrides are refused. */
+        expect_invalid(vplAxesBxpFull(ax3, &bs, 1, NULL, blo, bhi, &bd), "bxpFull(userMedians)");
+        bd.userMedians = NULL;
+        bd.confIntervals = NULL;
+        bd.autorange = 0;
+        check(vplAxesBxpFull(ax3, &bs, 1, NULL, blo, bhi, &bd), "bxpFull(props, capwidths)");
+        /* A caller from before the style fields: only what it knew is read. */
+        bd.structSize = offsetof(VplBoxDesc, capWidths);
+        bd.capWidths = badcaps;
+        check(vplAxesBoxPlotFull(ax3, bv, bc, 2, &bd), "boxPlotFull(original desc size)");
     }
 
     /* xcorr/acorr's full form. */

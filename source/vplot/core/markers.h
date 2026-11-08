@@ -149,13 +149,18 @@ inline Path marker_path(MarkerStyle marker)
             p.close_poly();
             break;
 
-        case MarkerStyle::Diamond:
-            p.move_to(0.0, 1.0);
-            p.line_to(-1.0, 0.0);
-            p.line_to(0.0, -1.0);
-            p.line_to(1.0, 0.0);
+        case MarkerStyle::Diamond: {
+            /* matplotlib's 'D' is the unit square turned 45 degrees, so its
+               tips reach sqrt(2)/2 of the size, not the half the other
+               polygons reach. */
+            constexpr double r = 1.4142135623730951;
+            p.move_to(0.0, r);
+            p.line_to(-r, 0.0);
+            p.line_to(0.0, -r);
+            p.line_to(r, 0.0);
             p.close_poly();
             break;
+        }
 
         case MarkerStyle::Plus:
             p.move_to(-1.0, 0.0);

@@ -46,8 +46,6 @@ arguments. Notable ones:
 
 - `contourf`: hatching.
 - `pie`: `hatch` (with the other hatched patches: no hatching yet).
-- `boxplot` / `bxp`: `bootstrap`, `usermedians`/`conf_intervals`, `capwidths`
-  and the `*props` style dictionaries.
 - `tripcolor`: `shading='gouraud'` (needs Gouraud triangles in every
   backend) and edge colours.
 - `annotate`: arrow styles beyond the default.

@@ -123,6 +123,15 @@ int main()
                 VplBoxDesc bd2{};
                 bd2.showMeans = 1;
                 a.bxp({st}, bd2, {2.5});                     // bxp(stats, showmeans=True)
+                VplBoxProps mp{};
+                mp.structSize = sizeof(mp);
+                mp.set = VplBoxProps_Color | VplBoxProps_LineWidth;
+                mp.colorSpec = "k";
+                mp.lineWidth = 2;
+                VplBoxDesc bd3{};
+                bd3.medianProps = &mp;
+                bd3.sym = "r+";
+                a.boxplot({{1, 2, 3, 4, 9}}, bd3);  // boxplot(d, medianprops=dict(color='k', linewidth=2), sym='r+')
             }
             a.acorr({1, 3, 2, 5, 4, 6, 5, 8}, 0, true, VplSpectralDetrend_Linear, false);  // acorr(x, detrend=..., usevlines=False)
             {

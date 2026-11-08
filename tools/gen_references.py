@@ -2039,6 +2039,40 @@ def _box_datasets():
     return a, b, c
 
 
+def case_boxplot_props():
+    """boxplot's style dictionaries and per-box overrides.
+
+    Left: notches with a user median and confidence interval, capwidths,
+    autorange (the fourth group has zero IQR), mean lines, and every *props
+    dictionary on line boxes. Right: horizontal patch boxes whose boxprops
+    color becomes the edge, a coloured sym, mean markers restyled, and legend
+    labels on the boxes.
+    """
+    a, b, c = _box_datasets()
+    d = [2.0] * 12 + [1.0, 3.5, 0.5]
+    fig = plt.figure(figsize=(6.4, 4.8), dpi=100)
+    ax1 = fig.add_subplot(1, 2, 1)
+    ax1.boxplot([a, b, c, d], notch=True, usermedians=[None, 0.5, None, None],
+                conf_intervals=[None, (0.2, 0.9), (None, 0.8), None],
+                capwidths=[0.1, 0.2, 0.3, 0.4], autorange=True,
+                showmeans=True, meanline=True,
+                meanprops=dict(color="purple", linewidth=1.5),
+                medianprops=dict(color="k", linewidth=2),
+                whiskerprops=dict(linestyle="--", color="0.4"),
+                capprops=dict(color="tab:red", linewidth=2),
+                boxprops=dict(color="tab:blue"),
+                flierprops=dict(marker="D", markerfacecolor="tab:green",
+                                markersize=5, markeredgecolor="none"))
+    ax2 = fig.add_subplot(1, 2, 2)
+    ax2.boxplot([a, b, c, d], orientation="horizontal", patch_artist=True,
+                boxprops=dict(facecolor="#add8e6", color="navy", linewidth=1.5),
+                sym="r+", showmeans=True,
+                meanprops=dict(marker="o", markerfacecolor="white", markeredgecolor="k"),
+                label=["A", "B", "C", "D"])
+    ax2.legend(loc="lower right")
+    save(fig, "boxplot_props")
+
+
 def case_boxplot_full():
     """boxplot's keyword arguments.
 
@@ -2974,6 +3008,7 @@ CASES = [
     case_pie_shadow_donut,
     case_quiver_units,
     case_barbs_options,
+    case_boxplot_props,
 ]
 
 

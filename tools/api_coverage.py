@@ -222,13 +222,14 @@ STATUS = {
         "the estimate itself",
     ),
     "boxplot": (
-        PARTIAL,
+        FULL,
         "vplAxesBoxPlotFull",
-        "whis (a factor or a percentile pair), positions, widths, tick_labels, "
+        "whis (a factor or a percentile pair), autorange, bootstrap (seeded "
+        "resamples, so equal to numpy's in distribution), usermedians, "
+        "conf_intervals, sym, positions, widths, capwidths, tick_labels, label, "
         "orientation, patch_artist, notch, showmeans with meanline, showcaps, "
-        "showbox, showfliers and manage_ticks; vplAxesBoxPlot is the defaults "
-        "convenience. No bootstrap, usermedians/conf_intervals, sym, capwidths "
-        "or the *props dictionaries",
+        "showbox, showfliers, manage_ticks and all six *props dictionaries; "
+        "vplAxesBoxPlot is the defaults convenience",
     ),
     "psd": (FULL, "vplAxesPsd", "Welch's method with the window, detrend, sides and pad_to knobs"),
     "csd": (FULL, "vplAxesCsd", "same helper and knobs as psd"),
@@ -315,11 +316,12 @@ STATUS = {
         "per-cell colours, no edges= modes, no explicit bbox, no auto font size",
     ),
     "bxp": (
-        PARTIAL,
+        FULL,
         "vplAxesBxpFull",
         "the five statistics and fliers, plus means and notch ends alongside, "
-        "with the same options as boxplot; vplAxesBxp is the statistics-only "
-        "convenience. No capwidths or *props dictionaries",
+        "with positions, widths, capwidths, label, the *props dictionaries "
+        "and the other display options boxplot shares; vplAxesBxp is the "
+        "statistics-only convenience",
     ),
     "axline": (FULL, "vplAxesAxLine", "point-and-slope, including a vertical slope"),
     "bar_label": (

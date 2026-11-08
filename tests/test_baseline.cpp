@@ -1072,6 +1072,111 @@ vpl::Figure make_quiver_colors()
     return fig;
 }
 
+/* Mirrors case_boxplot_props in tools/gen_references.py, through the C ABI. */
+vpl::Figure make_boxplot_props()
+{
+    std::vector<double> all;
+    std::vector<std::size_t> counts;
+    for (int i = 0; i < 60; ++i) {
+        all.push_back(std::sin(i * 0.7) * 2.0 + std::cos(i * 0.13));
+    }
+    all.push_back(6.5);
+    all.push_back(-5.0);
+    counts.push_back(62);
+    for (int i = 0; i < 45; ++i) {
+        const double cs = std::cos(i * 0.31);
+        all.push_back(cs * cs * cs * 3.0 + 1.0);
+    }
+    counts.push_back(45);
+    for (int i = 0; i < 70; ++i) {
+        all.push_back(0.5 * std::sin(i * 1.9) + 0.03 * i);
+    }
+    all.push_back(4.0);
+    counts.push_back(71);
+    for (int i = 0; i < 12; ++i) {
+        all.push_back(2.0);
+    }
+    all.push_back(1.0);
+    all.push_back(3.5);
+    all.push_back(0.5);
+    counts.push_back(15);
+
+    const double nan = std::numeric_limits<double>::quiet_NaN();
+    vpl::Figure fig;
+    vpl::Axes &a1 = fig.add_subplot(1, 2, 1);
+    {
+        const double medians[4] = {nan, 0.5, nan, nan};
+        const double cis[8] = {nan, nan, 0.2, 0.9, nan, 0.8, nan, nan};
+        const double capw[4] = {0.1, 0.2, 0.3, 0.4};
+        VplBoxProps mean{}, median{}, whisker{}, cap{}, box{}, flier{};
+        mean.structSize = median.structSize = whisker.structSize = sizeof(VplBoxProps);
+        cap.structSize = box.structSize = flier.structSize = sizeof(VplBoxProps);
+        mean.set = VplBoxProps_Color | VplBoxProps_LineWidth;
+        mean.colorSpec = "purple";
+        mean.lineWidth = 1.5;
+        median.set = VplBoxProps_Color | VplBoxProps_LineWidth;
+        median.colorSpec = "k";
+        median.lineWidth = 2.0;
+        whisker.set = VplBoxProps_LineStyle | VplBoxProps_Color;
+        whisker.lineStyle = VplLineStyle_Dashed;
+        whisker.colorSpec = "0.4";
+        cap.set = VplBoxProps_Color | VplBoxProps_LineWidth;
+        cap.colorSpec = "tab:red";
+        cap.lineWidth = 2.0;
+        box.set = VplBoxProps_Color;
+        box.colorSpec = "tab:blue";
+        flier.set = VplBoxProps_Marker | VplBoxProps_MarkerFaceColor | VplBoxProps_MarkerSize |
+                    VplBoxProps_MarkerEdgeColor;
+        flier.marker = VplMarker_Diamond;
+        flier.markerFaceColorSpec = "tab:green";
+        flier.markerSize = 5.0;
+        flier.markerEdgeColorSpec = "none";
+        VplBoxDesc d{};
+        d.structSize = sizeof(d);
+        d.showNotches = 1;
+        d.userMedians = medians;
+        d.confIntervals = cis;
+        d.capWidths = capw;
+        d.autorange = 1;
+        d.showMeans = 1;
+        d.meanLine = 1;
+        d.meanProps = &mean;
+        d.medianProps = &median;
+        d.whiskerProps = &whisker;
+        d.capProps = &cap;
+        d.boxProps = &box;
+        d.flierProps = &flier;
+        vplAxesBoxPlotFull(reinterpret_cast<VplAxes *>(&a1), all.data(), counts.data(), 4, &d);
+    }
+    vpl::Axes &a2 = fig.add_subplot(1, 2, 2);
+    {
+        VplBoxProps box{}, mean{};
+        box.structSize = mean.structSize = sizeof(VplBoxProps);
+        box.set = VplBoxProps_FaceColor | VplBoxProps_Color | VplBoxProps_LineWidth;
+        box.faceColorSpec = "#add8e6";
+        box.colorSpec = "navy";
+        box.lineWidth = 1.5;
+        mean.set = VplBoxProps_Marker | VplBoxProps_MarkerFaceColor | VplBoxProps_MarkerEdgeColor;
+        mean.marker = VplMarker_Circle;
+        mean.markerFaceColorSpec = "white";
+        mean.markerEdgeColorSpec = "k";
+        const char *labels[4] = {"A", "B", "C", "D"};
+        VplBoxDesc d{};
+        d.structSize = sizeof(d);
+        d.horizontal = 1;
+        d.patchArtist = 1;
+        d.boxProps = &box;
+        d.sym = "r+";
+        d.showMeans = 1;
+        d.meanProps = &mean;
+        d.legendLabels = labels;
+        vplAxesBoxPlotFull(reinterpret_cast<VplAxes *>(&a2), all.data(), counts.data(), 4, &d);
+    }
+    a2.legend_visible = true;
+    a2.legend_loc = vpl::LegendLoc::LowerRight;
+    return fig;
+}
+
 /* Mirrors case_boxplot_full in tools/gen_references.py. */
 vpl::Figure make_boxplot_full()
 {
@@ -3729,6 +3834,9 @@ int main()
 
     vpl::Figure bop = make_barbs_options();
     compare("barbs_options", bop, fonts);
+
+    vpl::Figure bpp = make_boxplot_props();
+    compare("boxplot_props", bpp, fonts);
 
     vpl::Figure fixed = make_fixed_ticks();
     compare("fixed_ticks", fixed, fonts);
