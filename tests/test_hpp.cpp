@@ -96,6 +96,14 @@ int main()
             }
             a.quiver({0, 1}, {0, 1}, {1, 0}, {0, 1}, {0.2, 0.9}, VplColormap_Plasma);  // quiver(X, Y, U, V, C)
             {
+                VplQuiverDesc qd{};
+                qd.set = VplQuiverField_Angles | VplQuiverField_ScaleUnits | VplQuiverField_Scale;
+                qd.angles = VplQuiverAngles_XY;
+                qd.scaleUnits = VplQuiverUnits_XY;
+                qd.scale = 1.0;
+                a.quiver({0, 1}, {0, 1}, {1, 0}, {0, 1}, qd);  // quiver(..., angles='xy', scale_units='xy', scale=1)
+            }
+            {
                 VplBoxDesc bd{};
                 bd.showMeans = 1;
                 bd.showNotches = 1;

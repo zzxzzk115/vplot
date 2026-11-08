@@ -48,8 +48,7 @@ arguments. Notable ones:
 - `pie`: `hatch` (with the other hatched patches: no hatching yet).
 - `boxplot` / `bxp`: `bootstrap`, `usermedians`/`conf_intervals`, `capwidths`
   and the `*props` style dictionaries.
-- `quiver`: `scale_units` and other `units`/`angles`; `barbs`: per-barb
-  colour and custom sizes.
+- `barbs`: per-barb colour and custom sizes.
 - `tripcolor`: `shading='gouraud'` (needs Gouraud triangles in every
   backend) and edge colours.
 - `annotate`: arrow styles beyond the default.

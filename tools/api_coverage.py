@@ -243,11 +243,12 @@ STATUS = {
     "secondary_xaxis": (PARTIAL, "vplFigureSecondaryXAxis", "affine functions only, so ticks stay evenly spaced; no arbitrary function pair, no FuncScale"),
     "secondary_yaxis": (PARTIAL, "vplFigureSecondaryYAxis", "affine functions only, as for secondary_xaxis"),
     "quiver": (
-        PARTIAL,
+        FULL,
         "vplAxesQuiver",
-        "units='width' and angles='uv' with matplotlib's auto-scaling, and "
-        "per-arrow colour from C through a colormap (vmin/vmax or autoscaled) "
-        "or an explicit colour list; no scale_units, no masked arrays",
+        "every units, scale_units and angles mode (fixed degrees included) "
+        "with matplotlib's auto-scaling, width, scale, pivot, the head shape "
+        "and minshaft/minlength, colour, and per-arrow colour from C through "
+        "a colormap or an explicit list; non-finite U or V masks an arrow",
     ),
     "quiverkey": (
         PARTIAL,

@@ -5709,6 +5709,24 @@ void arrow_outline(double length, const QuiverField &q, double out_x[8], double 
 
 } // namespace
 
+double Axes::quiver_dots_per_unit(QuiverUnits units, const Bbox &box, double px_per_pt) const
+{
+    /* bbox over viewLim, both in data -- not the scaled space. */
+    const Bbox vl = view_limits();
+    switch (units) {
+    case QuiverUnits::Width: return box.width();
+    case QuiverUnits::Height: return box.height();
+    case QuiverUnits::Dots: return 1.0;
+    case QuiverUnits::Inches: return 72.0 * px_per_pt;
+    case QuiverUnits::X: return box.width() / std::fabs(vl.x1 - vl.x0);
+    case QuiverUnits::Y: return box.height() / std::fabs(vl.y1 - vl.y0);
+    case QuiverUnits::XY:
+    default:
+        return std::hypot(box.width(), box.height()) /
+               std::hypot(vl.x1 - vl.x0, vl.y1 - vl.y0);
+    }
+}
+
 void Axes::draw_quivers(Renderer &renderer, const Bbox &box, double px_per_pt)
 {
 
@@ -5760,34 +5778,84 @@ void Axes::draw_quivers(Renderer &renderer, const Bbox &box, double px_per_pt)
         }
 
         /*
-         * With units='width' -- the default and the only one here -- the arrow
-         * width unit IS the axes width, so matplotlib's `span` is exactly 1
-         * and drops out of both constants below.
+         * matplotlib's _set_transform and _make_verts. An arrow unit is
+         * `units` (trans_scale pixels); `span` is the axes width in those
+         * units, which is 1 under the default units='width'.
          */
+        const double trans_scale = quiver_dots_per_unit(q.units, box, px_per_pt);
+        if (!(trans_scale > 0.0) || !std::isfinite(trans_scale)) {
+            continue;
+        }
+        const double span = box.width() / trans_scale;
         double width = q.width;
         if (!q.has_width) {
             const double sn = std::min(std::max(std::sqrt(static_cast<double>(n)), 8.0), 25.0);
-            width = 0.06 / sn;
+            width = 0.06 * span / sn;
         }
 
-        double scale = q.scale;
-        if (!q.has_scale) {
+        /* angles='xy' or scale_units='xy' measure each arrow on screen: from
+           (x, y) to (x, y) + eps * (u, v), eps 1 when both are 'xy' (so arrows
+           built by differencing X and Y join up) and otherwise a thousandth of
+           the data's largest extent, to keep clear of roundoff. */
+        const bool xy_scale = q.has_scale_units && q.scale_units == QuiverUnits::XY;
+        const bool xy_angles = q.angles == QuiverAngles::XY;
+        std::vector<double> scr_angle, scr_length;
+        if (xy_angles || xy_scale) {
+            double eps = 1.0;
+            if (!(xy_angles && xy_scale)) {
+                const Bbox dl = data_limits();
+                eps = 0.001 * std::max({std::fabs(dl.x0), std::fabs(dl.y0), std::fabs(dl.x1),
+                                        std::fabs(dl.y1)});
+            }
+            scr_angle.resize(n);
+            scr_length.resize(n);
+            for (std::size_t i = 0; i < n; ++i) {
+                const Point a = to_display(Point{scale_x(q.x[i]), scale_y(q.y[i])});
+                const Point b = to_display(
+                    Point{scale_x(q.x[i] + eps * q.u[i]), scale_y(q.y[i] + eps * q.v[i])});
+                scr_angle[i] = std::atan2(b.y - a.y, b.x - a.x);
+                scr_length[i] = std::hypot(b.x - a.x, b.y - a.y) / eps;
+            }
+        }
+        /* The magnitude that becomes length: on screen when scale_units='xy'
+           (and the angles are not fixed), else |(u, v)|. */
+        const bool screen_mag = xy_scale && q.angles != QuiverAngles::Fixed;
+        const auto magnitude = [&](std::size_t i) {
+            return screen_mag ? scr_length[i] : std::hypot(q.u[i], q.v[i]);
+        };
+
+        double scale_auto = 0.0;
+        {
             /* NOTE the different clamp from width's: max(10, sqrt(N)) here,
                clip(sqrt(N), 8, 25) there. matplotlib really does use two, and
-               they disagree for N below 64 and above 625. */
+               they disagree for N below 64 and above 625. Masked (non-finite)
+               arrows stay out of the mean. */
             const double sn = std::max(10.0, std::sqrt(static_cast<double>(n)));
             double amean = 0.0;
+            std::size_t good = 0;
             for (std::size_t i = 0; i < n; ++i) {
-                amean += std::hypot(q.u[i], q.v[i]);
+                if (std::isfinite(q.u[i]) && std::isfinite(q.v[i])) {
+                    amean += magnitude(i);
+                    ++good;
+                }
             }
-            amean /= static_cast<double>(n);
-            scale = 1.8 * amean * sn;
+            amean = good != 0 ? amean / static_cast<double>(good) : 0.0;
+            scale_auto = 1.8 * amean * sn / span;
         }
+        double widthu_per_lenu = 1.0;
+        if (q.has_scale_units) {
+            const double dx =
+                xy_scale ? 1.0 : quiver_dots_per_unit(q.scale_units, box, px_per_pt);
+            widthu_per_lenu = dx / trans_scale;
+        }
+        const double scale = q.has_scale ? q.scale : scale_auto * widthu_per_lenu;
         q.resolved_scale = scale;
         q.resolved_width = width;
+        q.resolved_trans_scale = trans_scale;
+        q.resolved_widthu_per_lenu = widthu_per_lenu;
 
-        const double width_px = width * box.width();
-        const double denom = scale * width;
+        const double width_px = width * trans_scale;
+        const double denom = scale * width / widthu_per_lenu;
 
         GraphicsContext gc;
         gc.color = Color::none();
@@ -5815,14 +5883,22 @@ void Axes::draw_quivers(Renderer &renderer, const Bbox &box, double px_per_pt)
         Path path;
         for (std::size_t i = 0; i < n; ++i) {
             const Point p = to_display(Point{scale_x(q.x[i]), scale_y(q.y[i])});
-            if (!std::isfinite(p.x) || !std::isfinite(p.y)) {
-                continue;
+            if (!std::isfinite(p.x) || !std::isfinite(p.y) || !std::isfinite(q.u[i]) ||
+                !std::isfinite(q.v[i])) {
+                continue; /* matplotlib masks an invalid U or V */
             }
-            const double a = std::hypot(q.u[i], q.v[i]);
+            const double a = magnitude(i);
             const double length = denom != 0.0 ? a / denom : 0.0;
-            /* angles='uv': direction in data units, so an arrow keeps its angle
-               when the axes aspect changes. */
-            const double theta = std::atan2(q.v[i], q.u[i]);
+            /* angles='uv': direction in (u, v) as given, so an arrow keeps its
+               angle when the axes aspect changes; 'xy' follows the screen;
+               fixed angles are degrees (NaN reads as 0). */
+            double theta = std::atan2(q.v[i], q.u[i]);
+            if (xy_angles) {
+                theta = scr_angle[i];
+            } else if (q.angles == QuiverAngles::Fixed) {
+                const double deg = i < q.angle_degrees.size() ? q.angle_degrees[i] : 0.0;
+                theta = std::isfinite(deg) ? deg * 3.14159265358979323846 / 180.0 : 0.0;
+            }
             if (!per_arrow) {
                 arrow_path(q, p.x, p.y, length, theta, width_px, path);
                 continue;
@@ -6091,9 +6167,17 @@ void Axes::draw_quivers(Renderer &renderer, const Bbox &box, double px_per_pt)
 
         const double px = box.x0 + key.x * box.width();
         const double py = box.y0 + key.y * box.height();
-        const double width_px = q.resolved_width * box.width();
-        const double denom = q.resolved_scale * q.resolved_width;
-        const double length = denom != 0.0 ? key.magnitude / denom : 0.0;
+        const double width_px = q.resolved_width * q.resolved_trans_scale;
+        const double denom =
+            q.resolved_scale * q.resolved_width / q.resolved_widthu_per_lenu;
+        /* Under scale_units='xy' the key's length is measured on screen too:
+           its magnitude along x, through the data transform. */
+        double mag = key.magnitude;
+        if (q.has_scale_units && q.scale_units == QuiverUnits::XY) {
+            const Bbox view = view_limits();
+            mag *= box.width() / (scale_x(view.x1) - scale_x(view.x0));
+        }
+        const double length = denom != 0.0 ? mag / denom : 0.0;
 
         /*
          * The key arrow pivots on its MIDDLE, whatever the field does.

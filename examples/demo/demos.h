@@ -213,7 +213,9 @@ static const VplDemoInfo kVplDemos[VplDemo_Count] = {
      "A field of arrows, with a key showing what one unit looks like. Both the "
      "shaft width and the arrow length are fractions of the axes rather than "
      "of the data, so neither can be worked out until the figure has a size -- "
-     "which is why the scale is resolved at draw time and the key borrows it.",
+     "which is why the scale is resolved at draw time and the key borrows it. "
+     "(units, scale_units='xy' and angles='xy' put arrows in data units "
+     "instead; this panel keeps the defaults.)",
      "vplAxesQuiver / vplAxesQuiverKey"},
     {"Wind barbs", "barbs",
      "The meteorological convention rather than a general vector plot: the "

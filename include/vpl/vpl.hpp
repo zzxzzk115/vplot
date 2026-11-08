@@ -1061,6 +1061,19 @@ class Axes
         d.cmap = cmap;
         detail::check(vplAxesQuiver(m_raw, x.data(), y.data(), u.data(), v.data(), n, &d));
     }
+    /* quiver with its keyword arguments (units, scale_units, angles, head
+       shape, ...) in a VplQuiverDesc; structSize is filled in here:
+
+           VplQuiverDesc d{};
+           d.set = VplQuiverField_Angles | VplQuiverField_ScaleUnits | VplQuiverField_Scale;
+           d.angles = VplQuiverAngles_XY; d.scaleUnits = VplQuiverUnits_XY; d.scale = 1;
+           ax.quiver(x, y, u, v, d);   // arrows drawn in data units */
+    void quiver(detail::Seq x, detail::Seq y, detail::Seq u, detail::Seq v, VplQuiverDesc desc)
+    {
+        const std::size_t n = std::min({x.size(), y.size(), u.size(), v.size()});
+        desc.structSize = sizeof(desc);
+        detail::check(vplAxesQuiver(m_raw, x.data(), y.data(), u.data(), v.data(), n, &desc));
+    }
     void barbs(detail::Seq x, detail::Seq y, detail::Seq u, detail::Seq v)
     {
         const std::size_t n = std::min({x.size(), y.size(), u.size(), v.size()});

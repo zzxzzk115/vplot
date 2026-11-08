@@ -855,6 +855,27 @@ typedef enum VplQuiverPivot
     VplQuiverPivot_Tip = 2,
 } VplQuiverPivot;
 
+/* quiver's units= and scale_units=: what one unit measures. */
+typedef enum VplQuiverUnits
+{
+    VplQuiverUnits_Width = 0, /* the axes width (units' default) */
+    VplQuiverUnits_Height = 1,
+    VplQuiverUnits_Dots = 2,
+    VplQuiverUnits_Inches = 3,
+    VplQuiverUnits_X = 4,
+    VplQuiverUnits_Y = 5,
+    VplQuiverUnits_XY = 6,
+} VplQuiverUnits;
+
+/* quiver's angles=: from (u, v) as given (the default), from (x, y) to
+   (x + u, y + v) on screen, or fixed degrees per arrow (angleDegrees). */
+typedef enum VplQuiverAngles
+{
+    VplQuiverAngles_UV = 0,
+    VplQuiverAngles_XY = 1,
+    VplQuiverAngles_Fixed = 2,
+} VplQuiverAngles;
+
 typedef enum VplQuiverField
 {
     VplQuiverField_Scale = 1u << 0,
@@ -864,6 +885,10 @@ typedef enum VplQuiverField
     VplQuiverField_Label = 1u << 4,
     VplQuiverField_C = 1u << 5,      /* C, cmap, and with hasVLimits vmin/vmax */
     VplQuiverField_Colors = 1u << 6, /* one RGBA per arrow */
+    VplQuiverField_Units = 1u << 7,  /* units */
+    VplQuiverField_ScaleUnits = 1u << 8, /* scaleUnits; unset is arrow units */
+    VplQuiverField_Angles = 1u << 9, /* angles, with angleDegrees for Fixed */
+    VplQuiverField_Head = 1u << 10,  /* headWidth .. minLength, all five */
 } VplQuiverField;
 
 typedef struct VplQuiverDesc
@@ -889,6 +914,23 @@ typedef struct VplQuiverDesc
     double vmax;
     /* Or explicit colours: count * 4 floats, RGBA in 0..1 per arrow. */
     const float *colors;
+
+    /* Added later still. units= (width is a fraction of it, and the head
+       geometry scales with it), scale_units= (`scale` is then data units per
+       scale unit: angles=XY, scaleUnits=XY, scale=1 draws (u, v) in x, y
+       units), and angles=. */
+    VplQuiverUnits units;
+    VplQuiverUnits scaleUnits;
+    VplQuiverAngles angles;
+    const double *angleDegrees; /* count entries, for VplQuiverAngles_Fixed */
+    /* The arrow's shape in shaft widths (matplotlib: 3, 5, 4.5, 1, 1):
+       headwidth, headlength, headaxislength; below minshaft * headlength an
+       arrow shrinks whole, below minlength it is a dot. */
+    double headWidth;
+    double headLength;
+    double headAxisLength;
+    double minShaft;
+    double minLength;
 } VplQuiverDesc;
 
 /* A field of arrows -- quiver. Only the arrow POSITIONS count towards the data

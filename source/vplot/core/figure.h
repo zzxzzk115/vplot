@@ -632,6 +632,28 @@ enum class QuiverPivot
     Tip
 };
 
+/* quiver's units and scale_units: what one unit is, in pixels --
+   matplotlib's Quiver._dots_per_unit. */
+enum class QuiverUnits
+{
+    Width,  /* the axes width */
+    Height, /* the axes height */
+    Dots,   /* one pixel */
+    Inches,
+    X,      /* one x data unit */
+    Y,      /* one y data unit */
+    XY,     /* the view's diagonal, as data; as scale_units, the data itself */
+};
+
+/* quiver's angles: from (u, v) as given, from the arrow's (x, y) to
+   (x + u, y + v) on screen, or fixed degrees per arrow. */
+enum class QuiverAngles
+{
+    UV,
+    XY,
+    Fixed,
+};
+
 /*
  * A field of arrows -- quiver.
  *
@@ -671,6 +693,14 @@ struct QuiverField
     std::vector<Color> colors;
     QuiverPivot pivot = QuiverPivot::Tail;
 
+    /* units= (what width and the arrow geometry are measured in),
+       scale_units= (unset: arrow units) and angles=. */
+    QuiverUnits units = QuiverUnits::Width;
+    bool has_scale_units = false;
+    QuiverUnits scale_units = QuiverUnits::Width;
+    QuiverAngles angles = QuiverAngles::UV;
+    std::vector<double> angle_degrees; /* angles=Fixed, one per arrow */
+
     /* In shaft widths. matplotlib's defaults; head is 5 long, 3 wide, and the
        barb where the head meets the shaft is 4.5 along. */
     double headwidth = 3.0;
@@ -687,6 +717,8 @@ struct QuiverField
        exactly like the field it labels. */
     mutable double resolved_scale = 0.0;
     mutable double resolved_width = 0.0;
+    mutable double resolved_trans_scale = 0.0;   /* pixels per arrow unit */
+    mutable double resolved_widthu_per_lenu = 1.0;
 };
 
 /*
@@ -2218,6 +2250,7 @@ class Axes
        in the line tier (a LineCollection's zorder 2). */
     void draw_contours(Renderer &renderer, const Bbox &box, double px_per_pt,
                        bool line_tier);
+    double quiver_dots_per_unit(QuiverUnits units, const Bbox &box, double px_per_pt) const;
 
     void draw_tables(Renderer &renderer, const Bbox &box, double px_per_pt);
 

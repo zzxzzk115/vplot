@@ -921,6 +921,64 @@ vpl::Figure make_pie_shadow_donut()
     return fig;
 }
 
+/* Mirrors case_quiver_units in tools/gen_references.py. */
+vpl::Figure make_quiver_units()
+{
+    std::vector<double> xs, ys, us, vs, ds;
+    for (int i = 0; i < 5; ++i) {
+        for (int j = 0; j < 4; ++j) {
+            xs.push_back(i);
+            ys.push_back(j);
+            us.push_back(0.6 * std::cos(0.7 * i + 0.4 * j));
+            vs.push_back(0.5 * std::sin(0.5 * i - 0.6 * j));
+            ds.push_back(25.0 * i - 40.0 * j);
+        }
+    }
+    const std::size_t n = xs.size();
+    vpl::Figure fig;
+    VplQuiverDesc d{};
+
+    VplAxes *ax1 = reinterpret_cast<VplAxes *>(&fig.add_subplot(2, 2, 1));
+    d.structSize = sizeof(d);
+    d.set = VplQuiverField_Angles | VplQuiverField_ScaleUnits | VplQuiverField_Scale;
+    d.angles = VplQuiverAngles_XY;
+    d.scaleUnits = VplQuiverUnits_XY;
+    d.scale = 1.0;
+    vplAxesQuiver(ax1, xs.data(), ys.data(), us.data(), vs.data(), n, &d);
+
+    VplAxes *ax2 = reinterpret_cast<VplAxes *>(&fig.add_subplot(2, 2, 2));
+    d = VplQuiverDesc{};
+    d.structSize = sizeof(d);
+    d.set = VplQuiverField_Units | VplQuiverField_Width;
+    d.units = VplQuiverUnits_Inches;
+    d.width = 0.02;
+    vplAxesQuiver(ax2, xs.data(), ys.data(), us.data(), vs.data(), n, &d);
+
+    VplAxes *ax3 = reinterpret_cast<VplAxes *>(&fig.add_subplot(2, 2, 3));
+    d = VplQuiverDesc{};
+    d.structSize = sizeof(d);
+    d.set = VplQuiverField_Units | VplQuiverField_Width | VplQuiverField_ScaleUnits |
+            VplQuiverField_Scale;
+    d.units = VplQuiverUnits_Dots;
+    d.width = 2.0;
+    d.scaleUnits = VplQuiverUnits_Inches;
+    d.scale = 2.0;
+    vplAxesQuiver(ax3, xs.data(), ys.data(), us.data(), vs.data(), n, &d);
+
+    VplAxes *ax4 = reinterpret_cast<VplAxes *>(&fig.add_subplot(2, 2, 4));
+    d = VplQuiverDesc{};
+    d.structSize = sizeof(d);
+    d.set = VplQuiverField_Angles | VplQuiverField_ScaleUnits | VplQuiverField_Scale |
+            VplQuiverField_Pivot;
+    d.angles = VplQuiverAngles_Fixed;
+    d.angleDegrees = ds.data();
+    d.scaleUnits = VplQuiverUnits_X;
+    d.scale = 1.0;
+    d.pivot = VplQuiverPivot_Middle;
+    vplAxesQuiver(ax4, xs.data(), ys.data(), us.data(), vs.data(), n, &d);
+    return fig;
+}
+
 /* Mirrors case_quiver_colors in tools/gen_references.py. */
 vpl::Figure make_quiver_colors()
 {
@@ -3616,6 +3674,9 @@ int main()
 
     vpl::Figure psd = make_pie_shadow_donut();
     compare("pie_shadow_donut", psd, fonts);
+
+    vpl::Figure qun = make_quiver_units();
+    compare("quiver_units", qun, fonts);
 
     vpl::Figure fixed = make_fixed_ticks();
     compare("fixed_ticks", fixed, fonts);

@@ -1049,6 +1049,32 @@ int main(void)
         qd.set = VplQuiverField_Width;
         qd.width = 0.01;
         check(vplAxesQuiver(ax3, qx, qy, qu, qv, 3, &qd), "quiver(original desc size)");
+        qd.structSize = offsetof(VplQuiverDesc, units); /* a caller from before units */
+        check(vplAxesQuiver(ax3, qx, qy, qu, qv, 3, &qd), "quiver(colours-era desc size)");
+
+        static const double qa[3] = {0.0, 45.0, NAN};
+        memset(&qd, 0, sizeof(qd));
+        qd.structSize = sizeof(qd);
+        qd.set = VplQuiverField_Units | VplQuiverField_ScaleUnits | VplQuiverField_Angles |
+                 VplQuiverField_Head;
+        qd.units = VplQuiverUnits_Inches;
+        qd.scaleUnits = VplQuiverUnits_Y;
+        qd.angles = VplQuiverAngles_Fixed;
+        qd.angleDegrees = qa;
+        qd.headWidth = 4.0;
+        qd.headLength = 6.0;
+        qd.headAxisLength = 5.0;
+        qd.minShaft = 2.0;
+        qd.minLength = 0.5;
+        check(vplAxesQuiver(ax3, qx, qy, qu, qv, 3, &qd), "quiver(units, fixed angles, head)");
+        qd.angleDegrees = NULL;
+        expect_invalid(vplAxesQuiver(ax3, qx, qy, qu, qv, 3, &qd), "quiver(fixed, no angles)");
+        qd.angleDegrees = qa;
+        qd.units = (VplQuiverUnits)99;
+        expect_invalid(vplAxesQuiver(ax3, qx, qy, qu, qv, 3, &qd), "quiver(unknown units)");
+        qd.units = VplQuiverUnits_Dots;
+        qd.headLength = 0.0;
+        expect_invalid(vplAxesQuiver(ax3, qx, qy, qu, qv, 3, &qd), "quiver(zero headLength)");
         qd.structSize = 4;
         expect_invalid(vplAxesQuiver(ax3, qx, qy, qu, qv, 3, &qd), "quiver(truncated desc)");
     }

@@ -3087,7 +3087,58 @@ VplResult VPL_CALL vplAxesQuiver(VplAxes *axes,
         set_error("VplQuiverDesc.structSize does not match this header");
         return VplResult_InvalidArgument;
     }
-    const bool desc_v2 = desc != nullptr && desc->structSize >= sizeof(VplQuiverDesc);
+    const bool desc_v2 = desc != nullptr &&
+                         desc->structSize >= offsetof(VplQuiverDesc, colors) + sizeof(const float *);
+    const bool desc_v3 = desc != nullptr && desc->structSize >= sizeof(VplQuiverDesc);
+    const auto to_units = [](VplQuiverUnits u, vpl::QuiverUnits &out) {
+        switch (u) {
+        case VplQuiverUnits_Width: out = vpl::QuiverUnits::Width; return true;
+        case VplQuiverUnits_Height: out = vpl::QuiverUnits::Height; return true;
+        case VplQuiverUnits_Dots: out = vpl::QuiverUnits::Dots; return true;
+        case VplQuiverUnits_Inches: out = vpl::QuiverUnits::Inches; return true;
+        case VplQuiverUnits_X: out = vpl::QuiverUnits::X; return true;
+        case VplQuiverUnits_Y: out = vpl::QuiverUnits::Y; return true;
+        case VplQuiverUnits_XY: out = vpl::QuiverUnits::XY; return true;
+        default: return false;
+        }
+    };
+    vpl::QuiverUnits units = vpl::QuiverUnits::Width;
+    vpl::QuiverUnits scale_units = vpl::QuiverUnits::Width;
+    vpl::QuiverAngles angles = vpl::QuiverAngles::UV;
+    if (desc_v3) {
+        if ((desc->set & VplQuiverField_Units) != 0 && !to_units(desc->units, units)) {
+            set_error("unknown VplQuiverUnits");
+            return VplResult_InvalidArgument;
+        }
+        if ((desc->set & VplQuiverField_ScaleUnits) != 0 &&
+            !to_units(desc->scaleUnits, scale_units)) {
+            set_error("unknown VplQuiverUnits");
+            return VplResult_InvalidArgument;
+        }
+        if ((desc->set & VplQuiverField_Head) != 0 &&
+            (!(desc->headWidth >= 0.0) || !(desc->headLength > 0.0) ||
+             !(desc->headAxisLength >= 0.0) || !(desc->minShaft >= 0.0) ||
+             !(desc->minLength >= 0.0) || !std::isfinite(desc->headWidth + desc->headLength +
+                                                         desc->headAxisLength +
+                                                         desc->minShaft + desc->minLength))) {
+            set_error("head sizes must be finite and non-negative, headLength positive");
+            return VplResult_InvalidArgument;
+        }
+        if ((desc->set & VplQuiverField_Angles) != 0) {
+            switch (desc->angles) {
+            case VplQuiverAngles_UV: angles = vpl::QuiverAngles::UV; break;
+            case VplQuiverAngles_XY: angles = vpl::QuiverAngles::XY; break;
+            case VplQuiverAngles_Fixed:
+                if (desc->angleDegrees == nullptr) {
+                    set_error("VplQuiverAngles_Fixed needs angleDegrees");
+                    return VplResult_InvalidArgument;
+                }
+                angles = vpl::QuiverAngles::Fixed;
+                break;
+            default: set_error("unknown VplQuiverAngles"); return VplResult_InvalidArgument;
+            }
+        }
+    }
     if (desc_v2 && (desc->set & VplQuiverField_C) != 0) {
         if (desc->C == nullptr) {
             set_error("VplQuiverField_C needs C");
@@ -3153,6 +3204,22 @@ VplResult VPL_CALL vplAxesQuiver(VplAxes *axes,
         for (size_t i = 0; i < count; ++i) {
             const float *c = desc->colors + 4 * i;
             q.colors.push_back(vpl::Color{c[0], c[1], c[2], c[3]});
+        }
+    }
+    if (desc_v3) {
+        q.units = units;
+        q.has_scale_units = (desc->set & VplQuiverField_ScaleUnits) != 0;
+        q.scale_units = scale_units;
+        q.angles = angles;
+        if (angles == vpl::QuiverAngles::Fixed) {
+            q.angle_degrees.assign(desc->angleDegrees, desc->angleDegrees + count);
+        }
+        if ((desc->set & VplQuiverField_Head) != 0) {
+            q.headwidth = desc->headWidth;
+            q.headlength = desc->headLength;
+            q.headaxislength = desc->headAxisLength;
+            q.minshaft = desc->minShaft;
+            q.minlength = desc->minLength;
         }
     }
     return VplResult_Success;

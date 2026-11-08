@@ -2172,6 +2172,34 @@ def case_pie_shadow_donut():
     save(fig, "pie_shadow_donut")
 
 
+def case_quiver_units():
+    """quiver's units, scale_units and angles: (u, v) drawn in data units
+    (angles='xy', scale_units='xy', scale=1); units='inches' with an inch
+    width; units='dots' with scale_units='inches'; fixed angles with
+    scale_units='x'."""
+    import math
+
+    xs, ys, us, vs, ds = [], [], [], [], []
+    for i in range(5):
+        for j in range(4):
+            xs.append(float(i))
+            ys.append(float(j))
+            us.append(0.6 * math.cos(0.7 * i + 0.4 * j))
+            vs.append(0.5 * math.sin(0.5 * i - 0.6 * j))
+            ds.append(25.0 * i - 40.0 * j)
+
+    fig = plt.figure(figsize=(6.4, 4.8), dpi=100)
+    ax1 = fig.add_subplot(2, 2, 1)
+    ax1.quiver(xs, ys, us, vs, angles="xy", scale_units="xy", scale=1)
+    ax2 = fig.add_subplot(2, 2, 2)
+    ax2.quiver(xs, ys, us, vs, units="inches", width=0.02)
+    ax3 = fig.add_subplot(2, 2, 3)
+    ax3.quiver(xs, ys, us, vs, units="dots", width=2, scale_units="inches", scale=2)
+    ax4 = fig.add_subplot(2, 2, 4)
+    ax4.quiver(xs, ys, us, vs, angles=ds, scale_units="x", scale=1, pivot="middle")
+    save(fig, "quiver_units")
+
+
 def _contour_field():
     """A 30 x 40 closed-form field spanning about -1.4 .. 1.6, off-centre."""
     import math
@@ -2913,6 +2941,7 @@ CASES = [
     case_errorbar_limits,
     case_hexbin_log_marginals,
     case_pie_shadow_donut,
+    case_quiver_units,
 ]
 
 
